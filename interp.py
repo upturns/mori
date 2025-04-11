@@ -3,7 +3,6 @@ import re
 from functools import reduce
 from typing import Callable
 
-
 class Symbol:
     name: str
 
@@ -48,6 +47,8 @@ Expr = ( int
         | Callable[..., "Expr"]
         )
 
+eof_object = Symbol('#<eof-object>') # Note: uninterned; can't be read
+
 
 class Env:
     outer: "Env | None"
@@ -68,13 +69,15 @@ class Env:
         return str(self.bindings)
 
 
-def evaluate_define(arg_exprs: list[Expr], env: Env):
+def evaluate_define(arg_exprs: list[Expr], env: Env, cont):
     header = arg_exprs[0]
     body = arg_exprs[1]
 
     if isinstance(header, Symbol):
-        env.bindings[header.name] = evaluate(body, env)
-        return None
+        return evaluate(body, env, lambda val: (
+        env.bindings.update({header.name: val}),
+        cont(None)
+        )[1])
 
     if not isinstance(header, list):
         raise Exception("Malformed definition (1)!")
@@ -88,59 +91,93 @@ def evaluate_define(arg_exprs: list[Expr], env: Env):
     p = Procedure(params, body, env)
     env.bindings[name.name] = p
 
-    return None
+    return cont(None)
 
 
-def evaluate_begin(arg_exprs: list[Expr], env: Env):
-    res = None
-    for expr in arg_exprs:
-        res = evaluate(expr, env)
-    return res
+def eval_sequence(exprs: list[Expr], env: Env, cont):
+    """
+    evaluates a sequence of expressions in order,
+    discarding intermediate values and keeping the result of the last one
+    """
+    first, *rest = exprs
+
+    if not rest:
+        # Last expression: evaluate with original continuation
+        return evaluate(first, env, cont)
+
+    # Otherwise: evaluate `first`, discard result, continue with rest
+    return evaluate(first, env, 
+        lambda _ignored_value: eval_sequence(rest, env, cont)
+    )
 
 
-def evaluate_if(arg_exprs: list[Expr], env: Env):
+def evaluate_begin(exprs: list[Expr], env: Env, cont):
+    if not exprs:
+        raise Exception("begin with no expressions")
+    return eval_sequence(exprs, env, cont)
+
+
+def evaluate_if(arg_exprs: list[Expr], env: Env, cont):
     cond_expr = arg_exprs[0]
     conseq_expr = arg_exprs[1]
     alt_expr = arg_exprs[2]
 
-    cond = evaluate(cond_expr, env)
-    if cond:
-        return evaluate(conseq_expr, env)
-    else:
-        return evaluate(alt_expr, env)
+    return evaluate(cond_expr, env, lambda cond:
+            evaluate(conseq_expr, env, cont) if cond else
+            evaluate(alt_expr, env, cont)
+            )
 
 
-def evaluate_let(arg_exprs: list[Expr], env: Env):
+# cont should be a function that takes a list of exprs
+def evaluate_args(arg_exprs: list[Expr], env: Env, cont):
+    first, *rest = arg_exprs
+
+    if not rest:
+        # Last expression: evaluate with original continuation
+        return evaluate(first, env, lambda val: cont([val]))
+
+    # Otherwise: evaluate `first`, discard result, continue with rest
+    return evaluate(first, env, 
+        lambda val: evaluate_args(rest, env,
+                                  lambda values: cont([val] + values))
+    )
+
+
+def evaluate_let(arg_exprs: list[Expr], env: Env, cont):
     binding_exprs = arg_exprs[0]
     body_expr = arg_exprs[1]
 
     if not isinstance(binding_exprs, list):
         raise Exception("Invalid bindings in let!")
 
-    child_env = Env((), (), env)
-    for binding_expr in binding_exprs:
-        if not isinstance(binding_expr, list):
-            raise Exception("Invalid binding in let!")
-
-        var_expr = binding_expr[0]
-
+    names = []
+    val_exprs = []
+    for bexp in binding_exprs:
+        if not isinstance(bexp, list):
+            raise Exception("Invalid binding form in let (1)!")
+        var_expr = bexp[0]
         if not isinstance(var_expr, Symbol):
-            raise Exception("Invalid variable in let binding")
+            raise Exception("Invalid binding form in let (2)!")
+        names.append(var_expr.name)
+        val_exprs.append(bexp[1])
 
-        val_expr = binding_expr[1]
-        val = evaluate(val_expr, env)
-        child_env.bindings[var_expr.name] = val
+    def with_values(values):
+        child_env = Env((), (), env)
+        child_env.bindings.update(dict(zip(names, values)))
+        return evaluate(body_expr, child_env, cont)
 
-    return evaluate(body_expr, child_env)
+    return evaluate_args(val_exprs, env, with_values) 
 
 
-def evaluate_letrec(arg_exprs: list[Expr], env: Env):
+def evaluate_letrec(arg_exprs: list[Expr], env: Env, cont):
     binding_exprs = arg_exprs[0]
     body_expr = arg_exprs[1]
 
     if not isinstance(binding_exprs, list):
         raise Exception("Invalid bindings in letrec!")
 
+    names = []
+    val_exprs = []
     child_env = Env((), (), env)
     for binding_expr in binding_exprs:
         if not isinstance(binding_expr, list):
@@ -151,78 +188,67 @@ def evaluate_letrec(arg_exprs: list[Expr], env: Env):
         if not isinstance(var_expr, Symbol):
             raise Exception("Invalid variable in letrec binding")
 
+        names.append(var_expr.name)
+        val_exprs.append(binding_expr[1])
         child_env.bindings[var_expr.name] = None
 
-    vals = {}
-    for binding_expr in binding_exprs:
-        # todo: the `isinstance` checks here are unnecessary, but the type checker wants them.
-        if not isinstance(binding_expr, list):
-            raise Exception("Invalid binding in letrec!")
+    def with_values(values):
+        child_env.bindings.update(dict(zip(names, values)))
+        return evaluate(body_expr, child_env, cont)
 
-        var_expr = binding_expr[0]
-
-        if not isinstance(var_expr, Symbol):
-            raise Exception("Invalid variable in letrec binding")
-        val_expr = binding_expr[1]
-        val = evaluate(val_expr, child_env)
-
-        vals[var_expr.name] = val
-
-    child_env.bindings.update(vals)
-    return evaluate(body_expr, child_env)
+    return evaluate_args(val_exprs, child_env, with_values) 
 
 
-def evaluate_lambda(arg_exprs: list[Expr], env: Env):
+def evaluate_lambda(arg_exprs: list[Expr], env: Env, cont):
     param_exprs = arg_exprs[0]
     body_expr = arg_exprs[1]
-    return Procedure(param_exprs, body_expr, env)
+    return cont(Procedure(param_exprs, body_expr, env))
 
 
-def evaluate(expr: Expr, env: Env) -> Expr:
+def evaluate(expr: Expr, env: Env, cont) -> Expr:
     if isinstance(expr, list):
         func_expr = expr[0]
         arg_exprs = expr[1:]
 
-        # built-in functions (special forms)
+        # (special forms)
         # these functions work even if the global env is empty
         if func_expr == Symbol("define"):
-            return evaluate_define(arg_exprs, env)
+            return evaluate_define(arg_exprs, env, cont)
         if func_expr == Symbol("begin"):
-            return evaluate_begin(arg_exprs, env)
+            return evaluate_begin(arg_exprs, env, cont)
         if func_expr == Symbol("cond"):
-            return evaluate_if(arg_exprs, env)
+            return evaluate_if(arg_exprs, env, cont)
         if func_expr == Symbol("let"):
-            return evaluate_let(arg_exprs, env)
+            return evaluate_let(arg_exprs, env, cont)
         if func_expr == Symbol("letrec"):
-            return evaluate_letrec(arg_exprs, env)
+            return evaluate_letrec(arg_exprs, env, cont)
         if func_expr == Symbol("lambda"):
-            return evaluate_lambda(arg_exprs, env)
+            return evaluate_lambda(arg_exprs, env, cont)
 
-        # non-built-in functions
-        func = evaluate(func_expr, env)
-        args = [evaluate(x, env) for x in expr[1:]]
-        if isinstance(func, Procedure):
-            # user-defined function
-            if len(args) > len(func.parms):
-                raise Exception(f"Too many arguments provided to {func_expr}")
-            elif len(args) < len(func.parms):
-                raise Exception(f"Too few arguments provided to {func_expr}")
-            return evaluate(func.body, Env(func.parms, args, func.env))
-        elif callable(func):
-            # built-in function
-            return func(*args)
-        else:
-            raise Exception(f"Unimplemented -- tried to apply a non procedure or builtin function: {expr}")
+        def helper(func):
+            if callable(func):
+                # apply a function defined in host language
+                return evaluate_args(arg_exprs, env, lambda args: cont(func(*args)))
+            elif isinstance(func, Procedure):
+                # apply a procedure
+                return evaluate_args(arg_exprs, env, lambda args:
+                                     evaluate(func.body, Env(func.parms, args, func.env), cont))
+            else:
+                raise Exception(f"Unimplemented -- tried to apply a non procedure or builtin function: {expr}")
+        return evaluate(func_expr, env, helper)
+
     elif isinstance(expr, Symbol):
-        return env.find(expr)
+        return cont(env.find(expr))
     elif isinstance(expr, Procedure):
-        return expr
+        return cont(expr)
     elif isinstance(expr, Error):
-        pass
+        raise Exception("Unimplemented")
     elif isinstance(expr, int):
-        return expr
+        return cont(expr)
+    elif isinstance(expr, float):
+        return cont(expr)
     elif isinstance(expr, bool):
-        return expr
+        return cont(expr)
 
     raise Exception("Unhandled")
 
@@ -246,9 +272,6 @@ class InPort(object):
                 token, self.line = m.groups()
                 if token != '' and not token.startswith(';'):
                     return token
-
-
-eof_object = Symbol('#<eof-object>') # Note: uninterned; can't be read
 
 
 def readchar(inport):
