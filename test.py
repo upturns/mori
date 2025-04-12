@@ -1,4 +1,4 @@
-from interp import InPort, Procedure, read, evaluate, standard_env
+from interp import InPort, Procedure, read, evaluate, standard_env, trampoline
 from io import StringIO
 import unittest
 
@@ -7,7 +7,7 @@ def i(s: str):
     env = standard_env()
     x = InPort(StringIO(s))
     i = read(x)
-    return evaluate(i, env, lambda x: x), env
+    return trampoline(evaluate(i, env, lambda x: x)), env
 
 
 class TestStringMethods(unittest.TestCase):
@@ -39,6 +39,14 @@ class TestStringMethods(unittest.TestCase):
         self.assertEqual(i("(cond (= 1 1) 1 2)")[0], 1)
         self.assertEqual(i("(cond (= 1 2) 1 2)")[0], 2)
 
+    def test_lambda(self):
+        self.assertIsInstance(i("(lambda (x) (* 2 x))")[0], Procedure)
+        self.assertEqual(i("((lambda (x) (* 2 x)) 3)")[0], 6)
+        self.assertEqual(i("""
+            (((lambda (x) (lambda (y) (+ x y)))
+                99) 100)
+        """)[0], 199)
+
     def test_begin(self):
         self.assertEqual(i("(begin 1)")[0], 1)
         self.assertEqual(i("(begin 1 2 3)")[0], 3)
@@ -48,13 +56,24 @@ class TestStringMethods(unittest.TestCase):
         self.assertEqual(env.bindings['y'], 100)
         self.assertEqual(val, 199)
 
-    def test_lambda(self):
-        self.assertIsInstance(i("(lambda (x) (* 2 x))")[0], Procedure)
-        self.assertEqual(i("((lambda (x) (* 2 x)) 3)")[0], 6)
         self.assertEqual(i("""
-            (((lambda (x) (lambda (y) (+ x y)))
-                99) 100)
-        """)[0], 199)
+            (begin
+                (define f (lambda (x) (+ x 1)))
+                (f 99)
+                          )
+            """)[0], 100)
+
+        # Note the recurision is limited so that this should work without TCO implemented
+        self.assertEqual(i("""
+            (begin
+                (define factorial (lambda (x acc)
+                           (cond (= x 0) acc
+                                (factorial (- x 1) (* x acc))
+                           )
+                           ))
+                (factorial 5 1)
+                          )
+            """)[0], 120)
 
     def test_let(self):
         val, env = i("(let ((x 99) (y 100)) (+ x y))")
@@ -78,6 +97,43 @@ class TestStringMethods(unittest.TestCase):
                     (odd? (lambda (n) (cond (= n 0) #f (even? (- n 1)))))
                 )
                 (even? 9)
+            )
+            """)[0])
+
+    def test_callcc(self):
+        self.assertEqual(i("""
+            (call/cc (lambda (k) (k 99)))
+        """)[0], 99)
+
+        self.assertEqual(i("""
+            (call/cc (lambda (k) (begin (define t 0) (k 99) t)))
+        """)[0], 99)
+
+        self.assertEqual(i("""
+            (+ 1 (call/cc (lambda (k) (+ 2 (k 3)))))
+        """)[0], 4)
+
+    def test_tail_call_optimization(self):
+        # These calls produce stack overflow errors if TCO is not implemented
+        self.assertEqual(i("""
+            (begin
+                (define factorial (lambda (x acc)
+                           (cond (= x 0) acc
+                                (factorial (- x 1) (* x acc))
+                           )
+                           ))
+                (factorial 100 1)
+                          )
+        """)[0], 93326215443944152681699238856266700490715968264381621468592963895217599993229915608941463976156518286253697920827223758251185210916864000000000000000000000000)
+
+
+        self.assertTrue(i("""
+            (letrec
+                (
+                    (even? (lambda (n) (cond (= n 0) #t (odd? (- n 1)))))
+                    (odd? (lambda (n) (cond (= n 0) #f (even? (- n 1)))))
+                )
+                (even? 1000)
             )
             """)[0])
 

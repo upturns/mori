@@ -3,6 +3,7 @@ import re
 from functools import reduce
 from typing import Callable
 
+
 class Symbol:
     name: str
 
@@ -36,6 +37,12 @@ class Procedure:
         return f"#<Procedure: {self.parms}.{self.body}>"
 
 
+class Continuation:
+    f: Callable
+    def __init__(self, f):
+        self.f = f
+
+
 Expr = ( int
         | float
         | str
@@ -47,7 +54,7 @@ Expr = ( int
         | Callable[..., "Expr"]
         )
 
-eof_object = Symbol('#<eof-object>') # Note: uninterned; can't be read
+EOF_OBJECT = Symbol('#<eof-object>')
 
 
 class Env:
@@ -74,9 +81,9 @@ def evaluate_define(arg_exprs: list[Expr], env: Env, cont):
     body = arg_exprs[1]
 
     if isinstance(header, Symbol):
-        return evaluate(body, env, lambda val: (
+        return lambda: evaluate(body, env, lambda val: (
         env.bindings.update({header.name: val}),
-        cont(None)
+        lambda: cont(None)
         )[1])
 
     if not isinstance(header, list):
@@ -91,7 +98,7 @@ def evaluate_define(arg_exprs: list[Expr], env: Env, cont):
     p = Procedure(params, body, env)
     env.bindings[name.name] = p
 
-    return cont(None)
+    return lambda: cont(None)
 
 
 def eval_sequence(exprs: list[Expr], env: Env, cont):
@@ -103,11 +110,11 @@ def eval_sequence(exprs: list[Expr], env: Env, cont):
 
     if not rest:
         # Last expression: evaluate with original continuation
-        return evaluate(first, env, cont)
+        return lambda: evaluate(first, env, cont)
 
     # Otherwise: evaluate `first`, discard result, continue with rest
-    return evaluate(first, env, 
-        lambda _ignored_value: eval_sequence(rest, env, cont)
+    return lambda: evaluate(first, env, 
+        lambda _ignored_value: lambda: eval_sequence(rest, env, cont)
     )
 
 
@@ -122,9 +129,9 @@ def evaluate_if(arg_exprs: list[Expr], env: Env, cont):
     conseq_expr = arg_exprs[1]
     alt_expr = arg_exprs[2]
 
-    return evaluate(cond_expr, env, lambda cond:
-            evaluate(conseq_expr, env, cont) if cond else
-            evaluate(alt_expr, env, cont)
+    return lambda: evaluate(cond_expr, env, lambda cond:
+            (lambda: evaluate(conseq_expr, env, cont)) if cond else
+            lambda: evaluate(alt_expr, env, cont)
             )
 
 
@@ -134,12 +141,12 @@ def evaluate_args(arg_exprs: list[Expr], env: Env, cont):
 
     if not rest:
         # Last expression: evaluate with original continuation
-        return evaluate(first, env, lambda val: cont([val]))
+        return lambda: evaluate(first, env, lambda val: lambda: cont([val]))
 
     # Otherwise: evaluate `first`, discard result, continue with rest
-    return evaluate(first, env, 
+    return lambda: evaluate(first, env, 
         lambda val: evaluate_args(rest, env,
-                                  lambda values: cont([val] + values))
+                                  lambda values: lambda: cont([val] + values))
     )
 
 
@@ -164,7 +171,7 @@ def evaluate_let(arg_exprs: list[Expr], env: Env, cont):
     def with_values(values):
         child_env = Env((), (), env)
         child_env.bindings.update(dict(zip(names, values)))
-        return evaluate(body_expr, child_env, cont)
+        return lambda: evaluate(body_expr, child_env, cont)
 
     return evaluate_args(val_exprs, env, with_values) 
 
@@ -194,7 +201,7 @@ def evaluate_letrec(arg_exprs: list[Expr], env: Env, cont):
 
     def with_values(values):
         child_env.bindings.update(dict(zip(names, values)))
-        return evaluate(body_expr, child_env, cont)
+        return lambda: evaluate(body_expr, child_env, cont)
 
     return evaluate_args(val_exprs, child_env, with_values) 
 
@@ -202,7 +209,14 @@ def evaluate_letrec(arg_exprs: list[Expr], env: Env, cont):
 def evaluate_lambda(arg_exprs: list[Expr], env: Env, cont):
     param_exprs = arg_exprs[0]
     body_expr = arg_exprs[1]
-    return cont(Procedure(param_exprs, body_expr, env))
+    return lambda: cont(Procedure(param_exprs, body_expr, env))
+
+
+def eval_callcc(arg_exprs: list[Expr], env: Env, cont):
+    [func_expr] = arg_exprs
+    return lambda: evaluate(func_expr, env, lambda func:
+        lambda: evaluate(func.body,  Env(func.parms, [Continuation(cont)], func.env), cont)
+    )
 
 
 def evaluate(expr: Expr, env: Env, cont) -> Expr:
@@ -224,31 +238,35 @@ def evaluate(expr: Expr, env: Env, cont) -> Expr:
             return evaluate_letrec(arg_exprs, env, cont)
         if func_expr == Symbol("lambda"):
             return evaluate_lambda(arg_exprs, env, cont)
+        if func_expr == Symbol("call/cc"):
+            return eval_callcc(arg_exprs, env, cont)
 
         def helper(func):
             if callable(func):
-                # apply a function defined in host language
-                return evaluate_args(arg_exprs, env, lambda args: cont(func(*args)))
+                return lambda: evaluate_args(arg_exprs, env, lambda args: lambda: cont(func(*args)))
+            elif isinstance(func, Continuation):
+                # apply a continuation
+                return lambda: evaluate_args(arg_exprs, env, lambda args: lambda: func.f(*args))
             elif isinstance(func, Procedure):
                 # apply a procedure
-                return evaluate_args(arg_exprs, env, lambda args:
-                                     evaluate(func.body, Env(func.parms, args, func.env), cont))
+                return lambda: evaluate_args(arg_exprs, env, lambda args:
+                                     lambda: evaluate(func.body, Env(func.parms, args, func.env), cont))
             else:
                 raise Exception(f"Unimplemented -- tried to apply a non procedure or builtin function: {expr}")
         return evaluate(func_expr, env, helper)
 
     elif isinstance(expr, Symbol):
-        return cont(env.find(expr))
+        return lambda: cont(env.find(expr))
     elif isinstance(expr, Procedure):
-        return cont(expr)
+        return lambda: cont(expr)
     elif isinstance(expr, Error):
         raise Exception("Unimplemented")
-    elif isinstance(expr, int):
-        return cont(expr)
-    elif isinstance(expr, float):
-        return cont(expr)
     elif isinstance(expr, bool):
-        return cont(expr)
+         return lambda: cont(expr)
+    elif isinstance(expr, int):
+        return lambda: cont(expr)
+    elif isinstance(expr, float):
+        return lambda: cont(expr)
 
     raise Exception("Unhandled")
 
@@ -266,7 +284,7 @@ class InPort(object):
             if self.line == '':
                 self.line = self.file.readline()
             if self.line == '':
-                return eof_object
+                return EOF_OBJECT
             m = re.match(InPort.tokenizer, self.line)
             if m:
                 token, self.line = m.groups()
@@ -280,7 +298,7 @@ def readchar(inport):
         ch, inport.line = inport.line[0], inport.line[1:]
         return ch
     else:
-        return inport.file.read(1) or eof_object
+        return inport.file.read(1) or EOF_OBJECT
 
 
 def read(inport) -> Expr:
@@ -298,13 +316,13 @@ def read(inport) -> Expr:
             raise SyntaxError('unexpected )')
         # elif token in quotes:
         #     return [quotes[token], read(inport)]
-        elif token is eof_object:
+        elif token is EOF_OBJECT:
             raise SyntaxError('unexpected EOF in list')
         else:
             return atom(token)
     # body of read:
     token1 = inport.next_token()
-    return eof_object if token1 is eof_object else read_ahead(token1)
+    return EOF_OBJECT if token1 is EOF_OBJECT else read_ahead(token1)
 
 # quotes = {"'":_quote, "`":_quasiquote, ",":_unquote, ",@":_unquotesplicing}
 
@@ -328,6 +346,12 @@ def atom(token) -> Expr:
         #     except ValueError:
         #         return Symbol(token)
             return Symbol(token)
+
+
+def trampoline(f):
+    while callable(f):
+        f = f()
+    return f
 
 
 def standard_env():
