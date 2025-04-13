@@ -1,3 +1,20 @@
+"""
+Mori Scheme v0.1
+
+Minimal implementation of the primitive special forms & procedures required to bootstrap Scheme.
+
+Special Forms:
+- quote
+- lambda
+- if
+- set!
+- define
+- begin
+
+The current implementation also includes `let` and `letrec`,
+but these should be implemented in the MacroExpander eventually.
+
+"""
 import math
 import re
 from functools import reduce
@@ -39,8 +56,37 @@ class Procedure:
 
 class Continuation:
     f: Callable
-    def __init__(self, f):
+
+    def __init__(self, f, wind_stack):
         self.f = f
+        self.wind_stack = list(wind_stack)
+
+
+class InPort:
+    "An input port. Retains a line of chars."
+    tokenizer = r'''\s*(,@|[('`,)]|"(?:[\\].|[^\\"])*"|;.*|[^\s('"`,;)]*)(.*)'''
+    def __init__(self, file):
+        self.file = file
+        self.line = ''
+
+    def next_token(self) -> "Expr":
+        "Return the next token, reading new text into line buffer if needed."
+        while True:
+            if self.line == '':
+                self.line = self.file.readline()
+            if self.line == '':
+                return EOF_OBJECT
+            m = re.match(InPort.tokenizer, self.line)
+            if m:
+                token, self.line = m.groups()
+                if token != '' and not token.startswith(';'):
+                    return token
+
+
+class OutPort:
+    "An output port"
+    def __init__(self, file):
+        self.file = file
 
 
 Expr = ( int
@@ -52,9 +98,14 @@ Expr = ( int
         | Error
         | list["Expr"]
         | Callable[..., "Expr"]
+        | InPort
+        | OutPort
         )
 
 EOF_OBJECT = Symbol('#<eof-object>')
+
+
+dynamic_wind_stack = []  # Stack of (before_expr, after_expr)
 
 
 class Env:
@@ -71,6 +122,14 @@ class Env:
         elif self.outer:
             return self.outer.find(var)
         return Error(f"Variable '{var}' not found")
+
+    def set(self, var: Symbol, val: Expr | Callable[..., Expr]):
+        if var.name in self.bindings:
+            self.bindings[var.name] = val
+        elif self.outer:
+            return self.outer.set(var, val)
+        else:
+            return Error(f"Cannot Set! Variable '{var}' not found")
 
     def __repr__(self):
         return str(self.bindings)
@@ -137,6 +196,9 @@ def evaluate_if(arg_exprs: list[Expr], env: Env, cont):
 
 # cont should be a function that takes a list of exprs
 def evaluate_args(arg_exprs: list[Expr], env: Env, cont):
+    if len(arg_exprs) == 0:
+        return lambda: cont([])
+
     first, *rest = arg_exprs
 
     if not rest:
@@ -212,18 +274,69 @@ def evaluate_lambda(arg_exprs: list[Expr], env: Env, cont):
     return lambda: cont(Procedure(param_exprs, body_expr, env))
 
 
-def eval_callcc(arg_exprs: list[Expr], env: Env, cont):
-    [func_expr] = arg_exprs
-    return lambda: evaluate(func_expr, env, lambda func:
-        lambda: evaluate(func.body,  Env(func.parms, [Continuation(cont)], func.env), cont)
-    )
+def eval_callcc(expr, env, k):
+    [f_expr] = expr
+
+    def apply_fn(f):
+        # snapshot the dynamic-wind state
+        cont = Continuation(k, dynamic_wind_stack[:])
+        return evaluate(f.body, Env(f.parms, [cont], env), k)
+
+    return lambda: evaluate(f_expr, env, apply_fn)
+
+
+def eval_set(arg_exprs: list[Expr], env: Env, cont):
+    sym_expr, val_expr = arg_exprs
+    if not isinstance(sym_expr, Symbol):
+        raise Exception("Cannot use `set!` with a non-Symbol variable name")
+    return lambda: evaluate(val_expr, env, lambda val:
+                            lambda: cont(env.set(sym_expr, val)))
+
+
+def apply_continuation(func: Continuation, args, env: Env, from_stack):
+    to_stack = func.wind_stack[:]
+    prefix = shared_prefix_length(from_stack, to_stack)
+    # Run all after thunks in from_stack that are not shared with to_stack (i.e., we're exiting them)
+    # Run all before thunks in to_stack that are not shared with from_stack (i.e., we're entering them)
+    def run_afters(i, k):
+        if i < prefix:
+            return run_befores(prefix, k)
+        _, after = from_stack[i]
+        return evaluate(after.body, env, lambda _: run_afters(i - 1, k))
+
+    def run_befores(i, k):
+        if i >= len(to_stack):
+            # We are now in the destination context
+            dynamic_wind_stack[:] = to_stack
+            return k()
+        before, _ = to_stack[i]
+        return evaluate(before.body, env, lambda _: run_befores(i + 1, k))
+
+    # Entry point: start unwinding and rewinding, then apply the continuation
+    return run_afters(len(from_stack) - 1, lambda: func.f(*args))
+
+
+def eval_dynamic_wind(expr, env, cont):
+    global dynamic_wind_stack
+    before, body, after = expr
+    def run_before(_):
+        dynamic_wind_stack.append((before, after))
+
+        def run_body(result):
+            return evaluate(after.body, env, lambda _: (
+                dynamic_wind_stack.pop(),
+                cont(result)
+            )[1])
+
+        return lambda: evaluate(body.body, env, run_body)
+
+    return lambda: evaluate(before.body, env, run_before)
 
 
 def evaluate(expr: Expr, env: Env, cont) -> Expr:
     if isinstance(expr, list):
         func_expr = expr[0]
         arg_exprs = expr[1:]
-
         # (special forms)
         # these functions work even if the global env is empty
         if func_expr == Symbol("define"):
@@ -240,13 +353,19 @@ def evaluate(expr: Expr, env: Env, cont) -> Expr:
             return evaluate_lambda(arg_exprs, env, cont)
         if func_expr == Symbol("call/cc"):
             return eval_callcc(arg_exprs, env, cont)
+        if func_expr == Symbol("quote"):
+            return lambda: cont(*arg_exprs)
+        if func_expr == Symbol("set!"):
+            return eval_set(arg_exprs, env, cont)
+        if func_expr == Symbol("dynamic-wind"):
+            return lambda: evaluate_args(arg_exprs, env, lambda args: eval_dynamic_wind(args, env, cont))
 
         def helper(func):
             if callable(func):
                 return lambda: evaluate_args(arg_exprs, env, lambda args: lambda: cont(func(*args)))
             elif isinstance(func, Continuation):
                 # apply a continuation
-                return lambda: evaluate_args(arg_exprs, env, lambda args: lambda: func.f(*args))
+                return lambda: evaluate_args(arg_exprs, env, lambda args: lambda: apply_continuation(func, args, env, dynamic_wind_stack[:]))
             elif isinstance(func, Procedure):
                 # apply a procedure
                 return lambda: evaluate_args(arg_exprs, env, lambda args:
@@ -267,29 +386,19 @@ def evaluate(expr: Expr, env: Env, cont) -> Expr:
         return lambda: cont(expr)
     elif isinstance(expr, float):
         return lambda: cont(expr)
+    elif isinstance(expr, str):
+        return lambda: cont(expr)
+    elif isinstance(expr, InPort):
+        return lambda: cont(expr)
 
     raise Exception("Unhandled")
 
 
-class InPort(object):
-    "An input port. Retains a line of chars."
-    tokenizer = r'''\s*(,@|[('`,)]|"(?:[\\].|[^\\"])*"|;.*|[^\s('"`,;)]*)(.*)'''
-    def __init__(self, file):
-        self.file = file
-        self.line = ''
-
-    def next_token(self) -> Expr:
-        "Return the next token, reading new text into line buffer if needed."
-        while True:
-            if self.line == '':
-                self.line = self.file.readline()
-            if self.line == '':
-                return EOF_OBJECT
-            m = re.match(InPort.tokenizer, self.line)
-            if m:
-                token, self.line = m.groups()
-                if token != '' and not token.startswith(';'):
-                    return token
+def shared_prefix_length(stack1, stack2):
+    i = 0
+    while i < len(stack1) and i < len(stack2) and stack1[i] == stack2[i]:
+        i += 1
+    return i
 
 
 def readchar(inport):
@@ -314,8 +423,8 @@ def read(inport) -> Expr:
                     L.append(read_ahead(token))
         elif ')' == token:
             raise SyntaxError('unexpected )')
-        # elif token in quotes:
-        #     return [quotes[token], read(inport)]
+        elif token in quotes:
+            return [quotes[token], read(inport)]
         elif token is EOF_OBJECT:
             raise SyntaxError('unexpected EOF in list')
         else:
@@ -324,7 +433,17 @@ def read(inport) -> Expr:
     token1 = inport.next_token()
     return EOF_OBJECT if token1 is EOF_OBJECT else read_ahead(token1)
 
-# quotes = {"'":_quote, "`":_quasiquote, ",":_unquote, ",@":_unquotesplicing}
+
+_quote = Symbol("quote")
+# _quasiquote = Symbol("quote")
+# _unquote = Symbol("unquote")
+# _unquotesplicing = Symbol("unquote-splicing")
+quotes = {
+    "'":_quote,
+    # "`":_quasiquote,
+    # ",":_unquote,
+    # ",@":_unquotesplicing
+}
 
 
 def atom(token) -> Expr:
@@ -334,7 +453,7 @@ def atom(token) -> Expr:
     elif token == '#f':
         return False
     elif token[0] == '"':
-        return token[1:-1] #.decode('unicode_escape')
+        return token[1:-1]
     try:
         return int(token)
     except ValueError:
@@ -360,6 +479,21 @@ def standard_env():
         '+': lambda *args: sum(args),
         '-': lambda *args: reduce(lambda x, y: x - y, args),
         '*': lambda *args: math.prod(args),
-        '=': lambda a, b: a == b
+        '/': lambda *args: reduce(lambda x, y: x / y, args),
+        '=': lambda a, b: a == b,
+        '<': lambda a, b: a < b,
+        'length': lambda lst: len(lst),
+        'reverse': lambda lst: lst[::-1],
+        'cons': lambda a, b: [a] + b,
+        'eval': lambda expr: lambda: evaluate(expr, env, lambda x: x),
+        # InPort Procedures
+        'open-input-file': lambda fname: InPort(open(fname, 'r')),
+        'read': lambda inport: lambda: read(inport),
+        # OutPort Procedures
+        'open-output-file': lambda fname: OutPort(open(fname, 'w')),
+        'write': lambda obj, outport: lambda: outport.file.write(str(obj)),
+        # Todo: if second arg is present, use it as OutPort
+        'display': lambda *args: print(args),
+
     }
     return env
