@@ -1,4 +1,13 @@
-from interp import InPort, Procedure, Symbol, read, evaluate, standard_env, trampoline
+from interp import (
+    InPort,
+    Procedure,
+    Symbol,
+    pformat,
+    read,
+    evaluate,
+    standard_env,
+    trampoline,
+)
 from io import StringIO
 import unittest
 
@@ -88,6 +97,13 @@ class TestStringMethods(unittest.TestCase):
             ((Symbol("a"), Symbol("b")), (Symbol("c"), Symbol("d"))),
         )
 
+    def test_cons_ops(self):
+        self.assertEqual(i("(car '(1 2 3 4))")[0], 1)
+        self.assertEqual(i("(cdr '(1 2 3 4))")[0], (2, (3, (4, ()))))
+
+        self.assertEqual(i("(car (cons 1 2))")[0], 1)
+        self.assertEqual(i("(cdr (cons 1 2))")[0], 2)
+
     def test_list(self):
         self.assertEqual(i("(list 1 2)")[0], (1, (2, ())))
         self.assertEqual(i("(list 1 2 3)")[0], (1, (2, (3, ()))))
@@ -95,10 +111,17 @@ class TestStringMethods(unittest.TestCase):
     def test_dotted_list(self):
         self.assertEqual(i("'(1 . 2)")[0], (1, 2))
         self.assertEqual(i("'(1 2 . 3)")[0], (1, (2, 3)))
-        # self.assertEqual(i("(list 1 2 3)")[0], [1, [2, [3, []]]])
 
     def test_reverse(self):
         self.assertEqual(i("(reverse (list 1 2 3))")[0], (3, (2, (1, ()))))
+
+    def test_append(self):
+        self.assertEqual(i("(append '(1 2) '(3 4))")[0], ((1, (2, (3, (4, ()))))))
+        self.assertEqual(
+            i("(append '(1 2) '(3 4) '(5 6))")[0], ((1, (2, (3, (4, (5, (6, ())))))))
+        )
+        self.assertEqual(i("(append '(1 2 3) '())")[0], ((1, (2, (3, ())))))
+        self.assertEqual(i("(append '() '())")[0], ())
 
     def test_length(self):
         self.assertEqual(i("(length '())")[0], 0)
@@ -122,6 +145,21 @@ class TestStringMethods(unittest.TestCase):
         # 2 arg lambda
         self.assertEqual(i("((lambda (a b) (+ a b)) 2 3)")[0], 5)
 
+    def test_variadic_lambda(self):
+        self.assertEqual(i("((lambda (a . b) b) 1 2 3 4 5)")[0], (2, (3, (4, (5, ())))))
+        self.assertEqual(i("((lambda (a b . c) c) 1 2 3 4 5)")[0], (3, (4, (5, ()))))
+        self.assertEqual(i("((lambda (a . b) b) 1 2)")[0], (2, ()))
+
+    def test_apply(self):
+        self.assertEqual(i("(apply + '(1 2 3))")[0], 6)
+        self.assertEqual(i("(apply * '(2 3 4))")[0], 24)
+        self.assertEqual(i("(apply list '(1 2 3))")[0], (1, (2, (3, ()))))
+        self.assertEqual(i("(apply cons '(1 (2 3))) ")[0], (1, (2, (3, ()))))
+        # apply with variadic params
+        self.assertEqual(
+            i("(apply (lambda (x . args) args) '(1 2 3))) ")[0], (2, (3, ()))
+        )
+
     def test_define(self):
         val, env = i("(define x 99)")
         self.assertEqual(val, None)
@@ -132,6 +170,13 @@ class TestStringMethods(unittest.TestCase):
         self.assertEqual(val, None)
         self.assertIsInstance(env.bindings["dbl"], Procedure)
         self.assertEqual(i("(dbl 2)", env)[0], 4)
+
+    def test_define_variadic_procedure(self):
+        _val, env = i("(define (test x . y) y)")
+        self.assertEqual(i("(test 1 2 3 4)", env)[0], (2, (3, (4, ()))))
+
+        _val, env2 = i("(define (test2 x y . z) z)")
+        self.assertEqual(i("(test2 1 2 3 4)", env2)[0], (3, (4, ())))
 
     def test_if(self):
         self.assertEqual(i("(if #t 1 2)")[0], 1)
@@ -212,6 +257,50 @@ class TestStringMethods(unittest.TestCase):
         self.assertEqual(i("'((1 2) (3 4))")[0], ((1, (2, ())), ((3, (4, ())), ())))
         self.assertEqual(i("''a")[0], (Symbol("quote"), (Symbol("a"), ())))
         self.assertEqual(i("'(1 '2)")[0], (1, ((Symbol("quote"), (2, ())), ())))
+
+    def test_quasiquote_unquote(self):
+        # no unquote
+        self.assertEqual(i("`99")[0], 99)
+        self.assertEqual(i("`a")[0], Symbol("a"))
+        self.assertEqual(i("`(1 2 3)")[0], (1, (2, (3, ()))))
+        self.assertEqual(
+            i("`(A B C)")[0], (Symbol("A"), (Symbol("B"), (Symbol("C"), ())))
+        )
+
+        # basic unquote
+        self.assertEqual(i("`(A B ,3)")[0], (Symbol("A"), (Symbol("B"), (3, ()))))
+        self.assertEqual(i("`(A B ,(+ 1 2))")[0], (Symbol("A"), (Symbol("B"), (3, ()))))
+        self.assertEqual(
+            pformat(i("(quasiquote ((unquote 'a) (unquote 'b)))")[0]), "(a b)"
+        )
+
+        # nested quasiquote
+        self.assertEqual(i("``A")[0], (Symbol("quasiquote"), (Symbol("A"), ())))
+        self.assertEqual(
+            # i("`(1 2 `A)")[0], (1, (2, (Symbol("quasiquote"), (Symbol("A"), ())), ()))
+            i("`(1 2 `A)")[0],
+            (1, (2, ((Symbol("quasiquote"), (Symbol("A"), ())), ()))),
+        )
+
+        # nested unquote
+        self.assertEqual(
+            pformat(i("`(a `(b ,(+ 1 2) ,(foo ,(+ 1 3)) d))")[0]),
+            "(a `(b ,(+ 1 2) ,(foo 4) d))",
+        )
+
+    def test_quasiquote_unquote_splice(self):
+        # splice start
+        self.assertEqual(i("`(,@(list 1 2) 3)")[0], (1, (2, (3, ()))))
+        # splice end
+        self.assertEqual(i("`(1 ,@(list 2 3))")[0], (1, (2, (3, ()))))
+        # splice into middle
+        self.assertEqual(i("`(1 ,@(list 2 3) 4)")[0], (1, (2, (3, (4, ())))))
+        # whole expression
+        self.assertEqual(i("`(,@(list 1 2 3))")[0], (1, (2, (3, ()))))
+        # should fail:
+        # self.assertEqual(i("`,@(list 1 2 3)")[0], (1, (2, (3, ()))))
+        # dotted list splice
+        self.assertEqual(i("`(1 ,@(list 2 3) . 4)")[0], (1, (2, (3, 4))))
 
     def test_set(self):
         self.assertEqual(
