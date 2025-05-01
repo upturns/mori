@@ -33,7 +33,7 @@ Primitive Procedures:
 """
 
 import re
-from typing import Callable, TypeGuard
+from typing import Callable, TypeGuard, TypeVar
 import logging
 
 
@@ -146,7 +146,7 @@ class OutPort:
 
 
 ConsCell = tuple["Expr", "Expr"]
-
+Null = tuple[()]
 
 Expr = (
     int
@@ -159,30 +159,11 @@ Expr = (
     | Callable[..., "Expr"]
     | InPort
     | OutPort
-    | tuple[()]
+    | Null
 )
 
 Thunk = Callable[[], "Thunk" | Expr]
 InterpCont = Callable[[Expr], Expr | Thunk]
-
-
-def extract_bindings(param_exprs, vals_exprs):
-    if isNull(param_exprs):
-        return {}
-    if not isPair(param_exprs):
-        if not isinstance(param_exprs, Symbol):
-            raise Exception("Must be symbol in binding")
-        return {param_exprs.name: vals_exprs}
-
-    fst = param_exprs[0]
-    rest = param_exprs[1]
-
-    fst_val = vals_exprs[0]
-
-    if not isinstance(fst, Symbol):
-        raise Exception("Binding name must be a symbol")
-
-    return {fst.name: fst_val, **extract_bindings(rest, vals_exprs[1])}
 
 
 class Env:
@@ -204,10 +185,11 @@ class Env:
     def set(self, var: Symbol, val: Expr | Callable[..., Expr]):
         if var.name in self.bindings:
             self.bindings[var.name] = val
+            return val
         elif self.outer:
             return self.outer.set(var, val)
         else:
-            return Error(f"Cannot Set! Variable '{var}' not found")
+            raise Exception(f"Cannot Set! Variable '{var}' not found")
 
     def __repr__(self):
         return str(self.bindings)
@@ -216,7 +198,8 @@ class Env:
 EOF_OBJECT = Symbol("#<eof-object>")
 
 
-dynamic_wind_stack = []  # Stack of (before_expr, after_expr)
+WindStackItem = tuple[Expr, Expr]
+dynamic_wind_stack: list[WindStackItem] = []  # Stack of (before_expr, after_expr)
 
 
 ###########################################################
@@ -224,7 +207,9 @@ dynamic_wind_stack = []  # Stack of (before_expr, after_expr)
 ###########################################################
 
 
-def shared_prefix_length(stack1, stack2):
+def shared_prefix_length(
+    stack1: list[WindStackItem], stack2: list[WindStackItem]
+) -> int:
     i = 0
     while i < len(stack1) and i < len(stack2) and stack1[i] == stack2[i]:
         i += 1
@@ -254,16 +239,7 @@ def cons_list_to_python_list(expr: Expr) -> list[Expr]:
         return [expr[0]] + cons_list_to_python_list(expr[1])
 
 
-def pformat(expr: Expr, indent=0, max_width=80):
-    def is_syntax_form(exp: Expr, name):
-        return (
-            isPair(exp)
-            and isinstance(exp[0], Symbol)
-            and exp[0].name == name
-            and isPair(exp[1])
-            and isNull(exp[1][1])
-        )
-
+def pformat(expr: Expr, indent: int = 0, max_width: int = 80) -> str:
     def collect_list_elements(exp: Expr):
         elems = []
         while isPair(exp):
@@ -271,7 +247,7 @@ def pformat(expr: Expr, indent=0, max_width=80):
             exp = exp[1]
         return tuple(elems), exp  # rest will be [] if proper
 
-    def pp(exp: Expr, current_indent):
+    def pp(exp: Expr, current_indent: int) -> str:
         # Handle pairs (lists or dotted pairs)
         if isPair(exp):
             fst = car(exp)
@@ -315,9 +291,9 @@ def pformat(expr: Expr, indent=0, max_width=80):
     return formatted
 
 
-def pretty_print(expr: Expr, indent=0, max_width=80) -> None:
+def pretty_print(expr: Expr, indent: int = 0, max_width: int = 80) -> None:
     """Pretty-print a Scheme expression with indentation and shorthand syntax."""
-    formatted = pformat(expr, indent)
+    formatted = pformat(expr, indent, max_width)
     print(formatted)
 
 
@@ -350,35 +326,41 @@ def caddr(args: ConsCell) -> Expr:
 
 
 # gets the length of a cons list
-def length(lst):
+def length(lst: ConsCell | Null) -> int:
     result = 0
-    while (isinstance(lst, list) or isinstance(lst, tuple)) and len(lst) > 0:
+    while isPair(lst):
         result += 1
-        lst = lst[1]
-    if not (isinstance(lst, list) or isinstance(lst, tuple)):
-        result += 1
+        rest = cdr(lst)
+        if not isPair(rest) and not isNull(rest):
+            # todo: (length (1 . 2)) should raise an error
+            result += 1
+            break
+        lst = rest
+
     return result
 
 
 # reverses a proper list
-def reverse(lst):
+def reverse(lst: ConsCell | Null) -> ConsCell | Null:
     result = ()  # empty list
-    while lst is not None:
-        car = lst[0]
-        if len(lst[1]) == 0:
-            # this is the last cell
-            result = (car, result)
-            break
+    while isPair(lst):
+        fst = car(lst)
+        rest = cdr(lst)
+        if isPair(rest):
+            result = (fst, result)
+            lst = rest
         else:
-            cdr = lst[1]
-            result = (car, result)
-            lst = cdr
+            # this is the last cell
+            result = (fst, result)
+            break
+
     return result
 
 
-def reduce_proper_list(
-    exp: ConsCell, f: Callable[[Expr, Expr], Expr], accum: Expr
-) -> Expr:
+T = TypeVar("T")
+
+
+def reduce_proper_list(exp: ConsCell, f: Callable[[Expr, T], T], accum: T) -> T:
     # todo: should probably use while loop instead of recursion
     if len(exp) == 0:
         return accum
@@ -399,7 +381,7 @@ def isPair(expr: Expr) -> TypeGuard[ConsCell]:
     return (isinstance(expr, tuple) or isinstance(expr, list)) and len(expr) == 2
 
 
-def isNull(expr: Expr) -> TypeGuard[tuple[()]]:
+def isNull(expr: Expr) -> TypeGuard[Null]:
     logger.debug(f"Performing null check on: {expr}")
     return (isinstance(expr, tuple) or isinstance(expr, list)) and len(expr) == 0
 
@@ -410,425 +392,31 @@ def isNumber(expr: Expr) -> TypeGuard[int | float]:
     )
 
 
-###########################################################
-#                SPECIAL FORM EVALUATORS                  #
-###########################################################
+def extract_bindings(
+    param_exprs: Expr, vals_exprs: Expr
+) -> dict[str, Expr | Callable[..., Expr]]:
+    if isNull(param_exprs) or isNull(vals_exprs):
+        return {}
 
+    if not isPair(param_exprs):
+        if not isinstance(param_exprs, Symbol):
+            raise Exception("Must be symbol in binding")
+        return {param_exprs.name: vals_exprs}
 
-def evaluate_define(arg_exprs: ConsCell | tuple[()], env: Env, cont):
-    if isPair(arg_exprs):
-        header = car(arg_exprs)
-        body = cadr(arg_exprs)
-        logger.debug(f"Evaluating define. Header= {header}")
+    fst = car(param_exprs)
+    rest = cdr(param_exprs)
 
-        if isinstance(header, Symbol):
-            return lambda: evaluate(
-                body,
-                env,
-                lambda val: (
-                    env.bindings.update({header.name: val}),
-                    lambda: cont(None),
-                )[1],
-            )
+    if not isPair(vals_exprs):
+        return {}
 
-        if not isPair(header):
-            raise Exception("Malformed definition (1)!")
+    fst_val = car(vals_exprs)
 
-        name = header[0]
+    if not isinstance(fst, Symbol):
+        raise Exception("Binding name must be a symbol")
 
-        if not isinstance(name, Symbol):
-            raise Exception("Malformed definition (2)!")
+    vals_rest = cdr(vals_exprs)
 
-        params = header[1]
-        p = Procedure(params, body, env)
-        env.bindings[name.name] = p
-
-        return lambda: cont(None)
-    raise Exception("No arguments passed to define")
-
-
-def eval_sequence(exprs: ConsCell, env: Env, cont):
-    """
-    evaluates a sequence of expressions in order,
-    discarding intermediate values and keeping the result of the last one
-    """
-    first, rest = exprs
-    if isNull(rest):
-        # Last expression: evaluate with original continuation
-        return lambda: evaluate(first, env, cont)
-
-    if not isPair(rest):
-        raise Exception("Malformed list in eval sequence")
-
-    # Otherwise: evaluate `first`, discard result, continue with rest
-    return lambda: evaluate(
-        first, env, lambda _ignored_value: lambda: eval_sequence(rest, env, cont)
-    )
-
-
-def evaluate_begin(exprs: ConsCell | tuple[()], env: Env, cont):
-    if isPair(exprs):
-        return eval_sequence(exprs, env, cont)
-    raise Exception("No arguments passed to begin")
-
-
-def evaluate_if(args: ConsCell | tuple[()], env: Env, cont):
-    if isPair(args):
-        cond_expr = car(args)
-        conseq_expr = cadr(args)
-        alt_expr = caddr(args)
-
-        return lambda: evaluate(
-            cond_expr,
-            env,
-            lambda cond: (lambda: evaluate(conseq_expr, env, cont))
-            if cond
-            else lambda: evaluate(alt_expr, env, cont),
-        )
-    raise Exception("No arguments passed to if")
-
-
-# cont should be a function that takes a list of exprs
-def evaluate_args(arg_exprs: ConsCell | tuple[()], env: Env, cont):
-    if not isPair(arg_exprs):
-        return lambda: cont(())
-
-    first, rest = arg_exprs
-
-    if isNull(rest):
-        return lambda: evaluate(first, env, lambda val: lambda: cont((val, ())))
-
-    if not isPair(rest):
-        raise Exception("Malformed list in args evaluation")
-
-    return lambda: evaluate(
-        first,
-        env,
-        lambda val: evaluate_args(
-            rest, env, lambda values: lambda: cont((val, values))
-        ),
-    )
-
-
-def evaluate_let(arg_exprs: ConsCell | tuple[()], env: Env, cont):
-    if isPair(arg_exprs):
-        binding_exprs = car(arg_exprs)
-        body_expr = cadr(arg_exprs)
-
-        if not isPair(binding_exprs):
-            raise Exception("Invalid bindings in let!")
-
-        # binding_exprs is a linked list of pairs (k, v)
-        # we want to map it into a linked list of just values
-        binding_name_exprs = ()
-        binding_value_exprs = ()
-        b = binding_exprs
-        while isPair(b):
-            binding = car(b)
-            if not isPair(binding):
-                raise Exception("Binding must be a pair")
-            binding_name_exprs = (car(binding), binding_name_exprs)
-            binding_value_exprs = (cadr(binding), binding_value_exprs)
-            b = cdr(b)
-
-        def with_values(values):
-            child_env = Env(binding_name_exprs, values, env)
-            return lambda: evaluate(body_expr, child_env, cont)
-
-        return evaluate_args(binding_value_exprs, env, with_values)
-    raise Exception("No arguments passed to `let`")
-
-
-def evaluate_letrec(arg_exprs: ConsCell | tuple[()], env: Env, cont):
-    if isPair(arg_exprs):
-        binding_exprs = car(arg_exprs)
-        body_expr = cadr(arg_exprs)
-
-        if not isPair(binding_exprs):
-            raise Exception("Invalid bindings in letrec!")
-
-        names = []
-        child_env = Env((), (), env)
-
-        binding_name_exprs = ()
-        binding_value_exprs = ()
-        b = binding_exprs
-        while isPair(b):
-            binding = car(b)
-            if not isPair(binding):
-                raise Exception("Binding must be a pair")
-
-            name_expr = car(binding)
-            if not isinstance(name_expr, Symbol):
-                raise Exception("Binding name must be a symbol")
-
-            binding_name_exprs = (name_expr, binding_name_exprs)
-            binding_value_exprs = (cadr(binding), binding_value_exprs)
-
-            child_env.bindings[name_expr.name] = ()
-            names.append(name_expr.name)
-
-            b = cdr(b)
-
-        names.reverse()
-
-        def with_values(values):
-            child_env.bindings.update(
-                dict(zip(names, cons_list_to_python_list(values)))
-            )
-            return lambda: evaluate(body_expr, child_env, cont)
-
-        return evaluate_args(binding_value_exprs, child_env, with_values)
-    raise Exception("No arguments passed to `letrec`")
-
-
-def evaluate_lambda(arg_exprs: ConsCell | tuple[()], env: Env, cont):
-    if isPair(arg_exprs):
-        param_exprs = car(arg_exprs)
-        body_expr = cadr(arg_exprs)
-
-        # If the lambda is a term (lambda (x) x),
-        # it will still be parsed as `[lambda [x []] [x []]]`
-        if not isPair(body_expr):
-            return lambda: cont(Procedure(param_exprs, body_expr, env))
-
-        return lambda: cont(Procedure(param_exprs, body_expr, env))
-    raise Exception("No arguments passed to `lambda`")
-
-
-def eval_callcc(expr: ConsCell | tuple[()], env, k):
-    if isPair(expr):
-        f_expr = car(expr)
-
-        if isPair(f_expr) and isNull(cdr(f_expr)):
-            f_expr = car(f_expr)
-
-        def apply_fn(f):
-            # snapshot the dynamic-wind state
-            cont = Continuation(k, dynamic_wind_stack[:])
-            return evaluate(f.body, Env(f.parms, (cont, ()), env), k)
-
-        return lambda: evaluate(f_expr, env, apply_fn)
-    raise Exception("No arguments passed to `callcc`")
-
-
-def eval_set(arg_exprs: ConsCell | tuple[()], env: Env, cont):
-    if isPair(arg_exprs):
-        sym_expr = car(arg_exprs)
-        val_expr = cadr(arg_exprs)
-        if not isinstance(sym_expr, Symbol):
-            raise Exception("Cannot use `set!` with a non-Symbol variable name")
-        return lambda: evaluate(
-            val_expr, env, lambda val: lambda: cont(env.set(sym_expr, val))
-        )
-    raise Exception("No arguments passed to `set`")
-
-
-def apply_continuation(func: Continuation, args, env: Env, from_stack):
-    to_stack = func.wind_stack[:]
-    prefix = shared_prefix_length(from_stack, to_stack)
-
-    # Run all after thunks in from_stack that are not shared with to_stack (i.e., we're exiting them)
-    # Run all before thunks in to_stack that are not shared with from_stack (i.e., we're entering them)
-    def run_afters(i, k):
-        if i < prefix:
-            return run_befores(prefix, k)
-        _, after = from_stack[i]
-        return evaluate(after.body, env, lambda _: run_afters(i - 1, k))
-
-    def run_befores(i, k):
-        if i >= len(to_stack):
-            # We are now in the destination context
-            dynamic_wind_stack[:] = to_stack
-            return k()
-        before, _ = to_stack[i]
-        return evaluate(before.body, env, lambda _: run_befores(i + 1, k))
-
-    # Entry point: start unwinding and rewinding, then apply the continuation
-    if len(args[1]) == 0:
-        return run_afters(len(from_stack) - 1, lambda: func.f(args[0]))
-    return run_afters(len(from_stack) - 1, lambda: func.f(args))
-
-
-def apply_procedure(proc: Procedure, args: Expr, cont):
-    logger.debug(f"Applying defined procedure {proc} to {args}")
-    return lambda: evaluate(proc.body, Env(proc.parms, args, proc.env), cont)
-
-
-def apply_primitive_procedure(builtin_func, args: Expr, cont) -> Thunk:
-    logger.debug(f"Applying primitive procedure {builtin_func} to {args}")
-    return lambda: cont(builtin_func(args))
-
-
-def eval_dynamic_wind(expr, env, cont):
-    global dynamic_wind_stack
-    before = car(expr)
-    body = cadr(expr)
-    after = caddr(expr)
-
-    if not isinstance(before, Procedure):
-        raise Exception("!")
-    if not isinstance(body, Procedure):
-        raise Exception("!")
-    if not isinstance(after, Procedure):
-        raise Exception("!")
-
-    def run_before(_):
-        dynamic_wind_stack.append((before, after))
-
-        def run_body(result):
-            return evaluate(
-                after.body, env, lambda _: (dynamic_wind_stack.pop(), cont(result))[1]
-            )
-
-        return lambda: evaluate(body.body, env, run_body)
-
-    return lambda: evaluate(before.body, env, run_before)
-
-
-def _expand_quasiquote(expr, env, depth=0):
-    if isPair(expr):
-        if car(expr) == _unquote:
-            if depth == 0:
-                return trampoline(evaluate(cadr(expr), env, lambda x: x))
-            return (
-                Symbol("unquote"),
-                _expand_quasiquote(expr[1], env, depth - 1),
-            )
-        elif car(expr) == _unquotesplicing:
-            if depth == 0:
-                raise Exception("!!!!")
-            return (
-                Symbol("unquote-splicing"),
-                _expand_quasiquote(expr[1], env, depth - 1),
-            )
-        elif car(expr) == _quasiquote:
-            return (
-                Symbol("quasiquote"),
-                _expand_quasiquote(expr[1], env, depth + 1),
-            )
-        else:
-            fst = car(expr)
-            if isPair(fst) and car(fst) == _unquotesplicing:
-                return exec_append(
-                    (
-                        trampoline(evaluate(cadr(fst), env, lambda x: x)),
-                        (_expand_quasiquote(cdr(expr), env, depth), ()),
-                    )
-                )
-
-            return (
-                _expand_quasiquote(expr[0], env, depth),
-                _expand_quasiquote(expr[1], env, depth),
-            )
-    else:
-        return expr
-
-
-def eval_quote(args: ConsCell | tuple[()], env: Env, cont: InterpCont):
-    logger.debug(f"Evaluating quote: {args}")
-    if isPair(args):
-        if isNull(cdr(args)):
-            return lambda: cont(args[0])
-        return lambda: cont(args)
-    raise Exception("No arguments passed to `quote`")
-
-
-def eval_quasiquote(args, env, cont):
-    expr = car(args)
-    logger.debug(f"Evaluating quasiquote: {expr}")
-    expanded = _expand_quasiquote(expr, env)
-    return lambda: cont(expanded)
-
-
-def evaluate(expr: Expr, env: Env, cont: InterpCont) -> Thunk:
-    logger.debug(f"Evaluating: {expr}")
-    if isPair(expr):
-        fst = car(expr)
-        rest = cdr(expr)
-
-        if not isPair(rest) and not isNull(rest):
-            raise Exception(
-                f"Malformed input expression: {expr}. Must be a proper list!"
-            )
-
-        # (special forms)
-        if fst == Symbol("define"):
-            return evaluate_define(rest, env, cont)
-        if fst == Symbol("begin"):
-            return evaluate_begin(rest, env, cont)
-        if fst == Symbol("if"):
-            return evaluate_if(rest, env, cont)
-        if fst == Symbol("let"):
-            return evaluate_let(rest, env, cont)
-        if fst == Symbol("letrec"):
-            return evaluate_letrec(rest, env, cont)
-        if fst == Symbol("lambda"):
-            return evaluate_lambda(rest, env, cont)
-        if fst == Symbol("set!"):
-            return eval_set(rest, env, cont)
-        if fst == Symbol("call/cc"):
-            return eval_callcc(rest, env, cont)
-        if fst == Symbol("quote"):
-            return eval_quote(rest, env, cont)
-            # if isNull(cdr(rest)):
-            #     return lambda: cont(rest[0])
-            # return lambda: cont(rest)
-        if fst == Symbol("quasiquote"):
-            return eval_quasiquote(rest, env, cont)
-        if fst == Symbol("dynamic-wind"):
-            return lambda: evaluate_args(
-                rest, env, lambda args: eval_dynamic_wind(args, env, cont)
-            )
-
-        def helper(func):
-            if callable(func):
-                # apply a builtin procedure
-                return lambda: evaluate_args(
-                    rest, env, lambda args: apply_primitive_procedure(func, args, cont)
-                )
-            elif isinstance(func, Continuation):
-                # apply a continuation
-                return lambda: evaluate_args(
-                    rest,
-                    env,
-                    lambda args: lambda: apply_continuation(
-                        func, args, env, dynamic_wind_stack[:]
-                    ),
-                )
-            elif isinstance(func, Procedure):
-                # apply a user-defined procedure
-                return lambda: evaluate_args(
-                    rest, env, lambda args: apply_procedure(func, args, cont)
-                )
-            else:
-                raise Exception(
-                    f"Unimplemented -- tried to apply a non procedure or builtin function: {func}"
-                )
-
-        return evaluate(fst, env, helper)
-
-    elif isinstance(expr, Symbol):
-        res = env.find(expr)
-        logger.debug(f"Evaluating Symbol: {expr} to: {res}")
-
-        return lambda: cont(env.find(expr))
-    elif isinstance(expr, Procedure):
-        return lambda: cont(expr)
-    elif isinstance(expr, Error):
-        raise Exception(f"Cannot evaluate error: {expr}")
-    elif isinstance(expr, bool):
-        return lambda: cont(expr)
-    elif isinstance(expr, int):
-        return lambda: cont(expr)
-    elif isinstance(expr, float):
-        return lambda: cont(expr)
-    elif isinstance(expr, str):
-        return lambda: cont(expr)
-    elif isinstance(expr, InPort):
-        return lambda: cont(expr)
-
-    raise Exception("Unhandled")
+    return {fst.name: fst_val, **extract_bindings(rest, vals_rest)}
 
 
 ###########################################################
@@ -836,7 +424,7 @@ def evaluate(expr: Expr, env: Env, cont: InterpCont) -> Thunk:
 ###########################################################
 
 
-def readchar(inport):
+def readchar(inport: InPort):
     "Read the next character from an input port."
     if inport.line != "":
         ch, inport.line = inport.line[0], inport.line[1:]
@@ -845,15 +433,16 @@ def readchar(inport):
         return inport.file.read(1) or EOF_OBJECT
 
 
-def build_proper_list(elements: list[Expr]) -> ConsCell | tuple[()]:
+def build_proper_list(elements: list[Expr]) -> ConsCell | Null:
     "Build a proper list as nested cons cells."
-    result: ConsCell | tuple[()] = ()
+    result: ConsCell | Null = ()
     for elem in reversed(elements):
         result = (elem, result)
     return result
 
 
-def build_improper_list(elements, tail):
+# Todo: this returns a ConsCell, but typing it requires some work.
+def build_improper_list(elements: list[Expr], tail: Expr) -> Expr:
     "Build an improper list (dotted pair structure)."
     result = tail
     for elem in reversed(elements):
@@ -861,7 +450,7 @@ def build_improper_list(elements, tail):
     return result
 
 
-def read(inport) -> Expr:
+def read(inport: InPort) -> Expr:
     "Read a Scheme expression from an input port."
 
     def read_ahead(token) -> Expr:
@@ -879,6 +468,7 @@ def read(inport) -> Expr:
                     token = inport.next_token()
                     if token != ")":
                         raise SyntaxError("expected ) to close dotted pair")
+
                     return build_improper_list(L, cdr)
                 else:
                     L.append(read_ahead(token))
@@ -925,47 +515,472 @@ def atom(token) -> Expr:
 
 
 ###########################################################
+#                SPECIAL FORM EVALUATORS                  #
+###########################################################
+
+
+def eval_define(arg_exprs: ConsCell | Null, env: Env, cont: InterpCont) -> Thunk:
+    if isPair(arg_exprs):
+        header = car(arg_exprs)
+        body = cadr(arg_exprs)
+        logger.debug(f"Evaluating define. Header= {header}")
+
+        if isinstance(header, Symbol):
+            return lambda: evaluate(
+                body,
+                env,
+                lambda val: (
+                    env.bindings.update({header.name: val}),
+                    lambda: cont(()),
+                )[1],
+            )
+
+        if not isPair(header):
+            raise Exception("Malformed definition (1)!")
+
+        name = header[0]
+
+        if not isinstance(name, Symbol):
+            raise Exception("Malformed definition (2)!")
+
+        params = header[1]
+        p = Procedure(params, body, env)
+        env.bindings[name.name] = p
+
+        return lambda: cont(())
+    raise Exception("No arguments passed to define")
+
+
+def eval_sequence(exprs: ConsCell, env: Env, cont: InterpCont) -> Thunk:
+    """
+    evaluates a sequence of expressions in order,
+    discarding intermediate values and keeping the result of the last one
+    """
+    first, rest = exprs
+    if isNull(rest):
+        # Last expression: evaluate with original continuation
+        return lambda: evaluate(first, env, cont)
+
+    if not isPair(rest):
+        raise Exception("Malformed list in eval sequence")
+
+    # Otherwise: evaluate `first`, discard result, continue with rest
+    return lambda: evaluate(
+        first, env, lambda _ignored_value: lambda: eval_sequence(rest, env, cont)
+    )
+
+
+def eval_begin(exprs: ConsCell | Null, env: Env, cont: InterpCont) -> Thunk:
+    if isPair(exprs):
+        return eval_sequence(exprs, env, cont)
+    raise Exception("No arguments passed to begin")
+
+
+def eval_if(args: ConsCell | Null, env: Env, cont: InterpCont) -> Thunk:
+    if isPair(args):
+        cond_expr = car(args)
+        conseq_expr = cadr(args)
+        alt_expr = caddr(args)
+
+        return lambda: evaluate(
+            cond_expr,
+            env,
+            lambda cond: (lambda: evaluate(conseq_expr, env, cont))
+            if cond
+            else lambda: evaluate(alt_expr, env, cont),
+        )
+    raise Exception("No arguments passed to if")
+
+
+# cont should be a function that takes a list of exprs
+def eval_args(arg_exprs: ConsCell | Null, env: Env, cont: InterpCont) -> Thunk:
+    if not isPair(arg_exprs):
+        return lambda: cont(())
+
+    first, rest = arg_exprs
+
+    if isNull(rest):
+        return lambda: evaluate(first, env, lambda val: lambda: cont((val, ())))
+
+    if not isPair(rest):
+        raise Exception("Malformed list in args evaluation")
+
+    return lambda: evaluate(
+        first,
+        env,
+        lambda val: eval_args(rest, env, lambda values: lambda: cont((val, values))),
+    )
+
+
+def eval_let(arg_exprs: ConsCell | Null, env: Env, cont: InterpCont) -> Thunk:
+    if isPair(arg_exprs):
+        binding_exprs = car(arg_exprs)
+        body_expr = cadr(arg_exprs)
+
+        if not isPair(binding_exprs):
+            raise Exception("Invalid bindings in let!")
+
+        # binding_exprs is a linked list of pairs (k, v)
+        # we want to map it into a linked list of just values
+        binding_name_exprs = ()
+        binding_value_exprs = ()
+        b = binding_exprs
+        while isPair(b):
+            binding = car(b)
+            if not isPair(binding):
+                raise Exception("Binding must be a pair")
+            binding_name_exprs = (car(binding), binding_name_exprs)
+            binding_value_exprs = (cadr(binding), binding_value_exprs)
+            b = cdr(b)
+
+        def with_values(values):
+            child_env = Env(binding_name_exprs, values, env)
+            return lambda: evaluate(body_expr, child_env, cont)
+
+        return eval_args(binding_value_exprs, env, with_values)
+    raise Exception("No arguments passed to `let`")
+
+
+def eval_letrec(arg_exprs: ConsCell | Null, env: Env, cont: InterpCont) -> Thunk:
+    if isPair(arg_exprs):
+        binding_exprs = car(arg_exprs)
+        body_expr = cadr(arg_exprs)
+
+        if not isPair(binding_exprs):
+            raise Exception("Invalid bindings in letrec!")
+
+        names = []
+        child_env = Env((), (), env)
+
+        binding_name_exprs = ()
+        binding_value_exprs = ()
+        b = binding_exprs
+        while isPair(b):
+            binding = car(b)
+            if not isPair(binding):
+                raise Exception("Binding must be a pair")
+
+            name_expr = car(binding)
+            if not isinstance(name_expr, Symbol):
+                raise Exception("Binding name must be a symbol")
+
+            binding_name_exprs = (name_expr, binding_name_exprs)
+            binding_value_exprs = (cadr(binding), binding_value_exprs)
+
+            child_env.bindings[name_expr.name] = ()
+            names.append(name_expr.name)
+
+            b = cdr(b)
+
+        names.reverse()
+
+        def with_values(values):
+            child_env.bindings.update(
+                dict(zip(names, cons_list_to_python_list(values)))
+            )
+            return lambda: evaluate(body_expr, child_env, cont)
+
+        return eval_args(binding_value_exprs, child_env, with_values)
+    raise Exception("No arguments passed to `letrec`")
+
+
+def eval_lambda(arg_exprs: ConsCell | Null, env: Env, cont: InterpCont) -> Thunk:
+    if isPair(arg_exprs):
+        param_exprs = car(arg_exprs)
+        body_expr = cadr(arg_exprs)
+
+        # If the lambda is a term (lambda (x) x),
+        # it will still be parsed as `[lambda [x []] [x []]]`
+        if not isPair(body_expr):
+            return lambda: cont(Procedure(param_exprs, body_expr, env))
+
+        return lambda: cont(Procedure(param_exprs, body_expr, env))
+    raise Exception("No arguments passed to `lambda`")
+
+
+def eval_callcc(expr: ConsCell | Null, env: Env, k: InterpCont) -> Thunk:
+    if isPair(expr):
+        f_expr = car(expr)
+
+        if isPair(f_expr) and isNull(cdr(f_expr)):
+            f_expr = car(f_expr)
+
+        def apply_fn(f):
+            # snapshot the dynamic-wind state
+            cont = Continuation(k, dynamic_wind_stack[:])
+            return evaluate(f.body, Env(f.parms, (cont, ()), env), k)
+
+        return lambda: evaluate(f_expr, env, apply_fn)
+    raise Exception("No arguments passed to `callcc`")
+
+
+def eval_set(arg_exprs: ConsCell | Null, env: Env, cont: InterpCont) -> Thunk:
+    if isPair(arg_exprs):
+        sym_expr = car(arg_exprs)
+        val_expr = cadr(arg_exprs)
+        if not isinstance(sym_expr, Symbol):
+            raise Exception("Cannot use `set!` with a non-Symbol variable name")
+        return lambda: evaluate(
+            val_expr, env, lambda val: lambda: cont(env.set(sym_expr, val))
+        )
+    raise Exception("No arguments passed to `set`")
+
+
+def apply_continuation(
+    func: Continuation, args, env: Env, from_stack: list[WindStackItem]
+) -> Thunk:
+    to_stack = func.wind_stack[:]
+    prefix = shared_prefix_length(from_stack, to_stack)
+
+    # Run all after thunks in from_stack that are not shared with to_stack (i.e., we're exiting them)
+    # Run all before thunks in to_stack that are not shared with from_stack (i.e., we're entering them)
+    def run_afters(i, k):
+        if i < prefix:
+            return run_befores(prefix, k)
+        _, after = from_stack[i]
+        return evaluate(after.body, env, lambda _: run_afters(i - 1, k))
+
+    def run_befores(i, k):
+        if i >= len(to_stack):
+            # We are now in the destination context
+            dynamic_wind_stack[:] = to_stack
+            return k()
+        before, _ = to_stack[i]
+        return evaluate(before.body, env, lambda _: run_befores(i + 1, k))
+
+    # Entry point: start unwinding and rewinding, then apply the continuation
+    if len(args[1]) == 0:
+        return run_afters(len(from_stack) - 1, lambda: func.f(args[0]))
+    return run_afters(len(from_stack) - 1, lambda: func.f(args))
+
+
+def apply_procedure(proc: Procedure, args: Expr, cont: InterpCont) -> Thunk:
+    logger.debug(f"Applying defined procedure {proc} to {args}")
+    return lambda: evaluate(proc.body, Env(proc.parms, args, proc.env), cont)
+
+
+def apply_primitive_procedure(
+    builtin_func: Callable, args: Expr, cont: InterpCont
+) -> Thunk:
+    logger.debug(f"Applying primitive procedure {builtin_func} to {args}")
+    return lambda: cont(builtin_func(args))
+
+
+def eval_dynamic_wind(arg_exprs: Expr, env: Env, cont: InterpCont) -> Thunk:
+    global dynamic_wind_stack
+    if not isPair(arg_exprs):
+        raise Exception("Incorrect args provided to dynamic-wind")
+
+    before = car(arg_exprs)
+    body = cadr(arg_exprs)
+    after = caddr(arg_exprs)
+
+    if not isinstance(before, Procedure):
+        raise Exception("!")
+    if not isinstance(body, Procedure):
+        raise Exception("!")
+    if not isinstance(after, Procedure):
+        raise Exception("!")
+
+    def run_before(_):
+        dynamic_wind_stack.append((before, after))
+
+        def run_body(result):
+            return evaluate(
+                after.body, env, lambda _: (dynamic_wind_stack.pop(), cont(result))[1]
+            )
+
+        return lambda: evaluate(body.body, env, run_body)
+
+    return lambda: evaluate(before.body, env, run_before)
+
+
+def _expand_quasiquote(expr: Expr, env: Env, depth: int = 0) -> Expr:
+    if isPair(expr):
+        if car(expr) == _unquote:
+            if depth == 0:
+                return trampoline(evaluate(cadr(expr), env, lambda x: x))
+            return (
+                Symbol("unquote"),
+                _expand_quasiquote(expr[1], env, depth - 1),
+            )
+        elif car(expr) == _unquotesplicing:
+            if depth == 0:
+                raise Exception("!!!!")
+            return (
+                Symbol("unquote-splicing"),
+                _expand_quasiquote(expr[1], env, depth - 1),
+            )
+        elif car(expr) == _quasiquote:
+            return (
+                Symbol("quasiquote"),
+                _expand_quasiquote(expr[1], env, depth + 1),
+            )
+        else:
+            fst = car(expr)
+            if isPair(fst) and car(fst) == _unquotesplicing:
+                return exec_append(
+                    (
+                        trampoline(evaluate(cadr(fst), env, lambda x: x)),
+                        (_expand_quasiquote(cdr(expr), env, depth), ()),
+                    )
+                )
+
+            return (
+                _expand_quasiquote(expr[0], env, depth),
+                _expand_quasiquote(expr[1], env, depth),
+            )
+    else:
+        return expr
+
+
+def eval_quote(args: ConsCell | Null, _env: Env, cont: InterpCont) -> Thunk:
+    logger.debug(f"Evaluating quote: {args}")
+    if isPair(args):
+        if isNull(cdr(args)):
+            return lambda: cont(args[0])
+        return lambda: cont(args)
+    raise Exception("No arguments passed to `quote`")
+
+
+def eval_quasiquote(args: ConsCell | Null, env: Env, cont: InterpCont) -> Thunk:
+    if not isPair(args):
+        raise Exception("No arguments provided to quasiquote")
+    expr = car(args)
+    logger.debug(f"Evaluating quasiquote: {expr}")
+    expanded = _expand_quasiquote(expr, env)
+    return lambda: cont(expanded)
+
+
+def evaluate(expr: Expr, env: Env, cont: InterpCont) -> Thunk:
+    logger.debug(f"Evaluating: {expr}")
+    if isPair(expr):
+        fst = car(expr)
+        rest = cdr(expr)
+
+        if not isPair(rest) and not isNull(rest):
+            raise Exception(
+                f"Malformed input expression: {expr}. Must be a proper list!"
+            )
+
+        # (special forms)
+        if fst == Symbol("define"):
+            return eval_define(rest, env, cont)
+        if fst == Symbol("begin"):
+            return eval_begin(rest, env, cont)
+        if fst == Symbol("if"):
+            return eval_if(rest, env, cont)
+        if fst == Symbol("let"):
+            return eval_let(rest, env, cont)
+        if fst == Symbol("letrec"):
+            return eval_letrec(rest, env, cont)
+        if fst == Symbol("lambda"):
+            return eval_lambda(rest, env, cont)
+        if fst == Symbol("set!"):
+            return eval_set(rest, env, cont)
+        if fst == Symbol("call/cc"):
+            return eval_callcc(rest, env, cont)
+        if fst == Symbol("quote"):
+            return eval_quote(rest, env, cont)
+        if fst == Symbol("quasiquote"):
+            return eval_quasiquote(rest, env, cont)
+        if fst == Symbol("dynamic-wind"):
+            return lambda: eval_args(
+                rest, env, lambda args: eval_dynamic_wind(args, env, cont)
+            )
+
+        def helper(func):
+            if callable(func):
+                # apply a builtin procedure
+                return lambda: eval_args(
+                    rest, env, lambda args: apply_primitive_procedure(func, args, cont)
+                )
+            elif isinstance(func, Continuation):
+                # apply a continuation
+                return lambda: eval_args(
+                    rest,
+                    env,
+                    lambda args: lambda: apply_continuation(
+                        func, args, env, dynamic_wind_stack[:]
+                    ),
+                )
+            elif isinstance(func, Procedure):
+                # apply a user-defined procedure
+                return lambda: eval_args(
+                    rest, env, lambda args: apply_procedure(func, args, cont)
+                )
+            else:
+                raise Exception(
+                    f"Unimplemented -- tried to apply a non procedure or builtin function: {func}"
+                )
+
+        return evaluate(fst, env, helper)
+
+    elif isinstance(expr, Symbol):
+        res = env.find(expr)
+        logger.debug(f"Evaluating Symbol: {expr} to: {res}")
+
+        return lambda: cont(env.find(expr))
+    elif isinstance(expr, Procedure):
+        return lambda: cont(expr)
+    elif isinstance(expr, Error):
+        raise Exception(f"Cannot evaluate error: {expr}")
+    elif isinstance(expr, bool):
+        return lambda: cont(expr)
+    elif isinstance(expr, int):
+        return lambda: cont(expr)
+    elif isinstance(expr, float):
+        return lambda: cont(expr)
+    elif isinstance(expr, str):
+        return lambda: cont(expr)
+    elif isinstance(expr, InPort):
+        return lambda: cont(expr)
+
+    raise Exception("Unhandled")
+
+
+###########################################################
 #                  BUILT-IN PROCEDURES                    #
 ###########################################################
 
 
-def exec_isPair(args: ConsCell | tuple[()]):
+def exec_isPair(args: ConsCell | Null):
     if isPair(args):
         return isPair(car(args))
     raise Exception("No arguments provided to `pair?`")
 
 
-def exec_isNull(args: ConsCell | tuple[()]):
+def exec_isNull(args: ConsCell | Null):
     if isPair(args):
         return isNull(car(args))
     raise Exception("No arguments provided to `null?`")
 
 
-def exec_isNumber(args: ConsCell | tuple[()]):
+def exec_isNumber(args: ConsCell | Null):
     if isPair(args):
         return isNumber(car(args))
     raise Exception("No arguments provided to `number?`")
 
 
-def exec_isSymbol(args: ConsCell | tuple[()]):
+def exec_isSymbol(args: ConsCell | Null):
     if isPair(args):
         return isinstance(car(args), Symbol)
     raise Exception("No arguments provided to `symbol?`")
 
 
-def exec_isBool(args: ConsCell | tuple[()]):
+def exec_isBool(args: ConsCell | Null):
     if isPair(args):
         return isinstance(car(args), bool)
     raise Exception("No arguments provided to `boolean?`")
 
 
-def exec_isString(args: ConsCell | tuple[()]):
+def exec_isString(args: ConsCell | Null):
     if isPair(args):
         return isinstance(car(args), str)
     raise Exception("No arguments provided to `string?`")
 
 
-def exec_isAtom(args: ConsCell | tuple[()]):
+def exec_isAtom(args: ConsCell | Null):
     if isPair(args):
         return not isPair(car(args))
     raise Exception("No arguments provided to `atom?`")
@@ -979,7 +994,9 @@ def exec_eq(args: ConsCell):
 
 def exec_add(args: ConsCell):
     # todo: verify 2+ args
-    def _add_helper(curr, accum):
+    def _add_helper(curr: Expr, accum: int | float):
+        if not isNumber(curr):
+            raise Exception("Argument to add is not a number")
         return curr + accum
 
     return reduce_proper_list(args, _add_helper, 0)
@@ -987,13 +1004,21 @@ def exec_add(args: ConsCell):
 
 def exec_sub(args: ConsCell):
     # todo: verify 2+ args
-    def _sub_helper(curr, accum):
+    def _sub_helper(curr: Expr, accum: int | float):
+        if not isNumber(curr):
+            raise Exception("Argument to sub is not a number")
         return accum - curr
 
+    fst = car(args)
     rest = cdr(args)
+
+    if not isNumber(fst):
+        raise Exception("Argument so sub is not a number")
+
     if not isPair(rest):
         raise Exception("Malformed args for `sub`")
-    return reduce_proper_list(rest, _sub_helper, args[0])
+
+    return reduce_proper_list(rest, _sub_helper, fst)
 
 
 def exec_mul(args: ConsCell):
@@ -1004,18 +1029,25 @@ def exec_mul(args: ConsCell):
     return reduce_proper_list(args, _mul_helper, 1)
 
 
-def exec_div(args: ConsCell):
+def exec_div(args: ConsCell) -> int | float:
     # todo: verify 2+ args
-    def _div_helper(curr, accum):
+    def _div_helper(curr: Expr, accum: float) -> float:
+        if not isinstance(curr, float) and not isinstance(curr, int):
+            raise Exception("!")
         return accum / curr
 
     rest = cdr(args)
     if not isPair(rest):
         raise Exception("Malformed args for `div`")
-    return reduce_proper_list(rest, _div_helper, args[0])
+
+    fst = car(args)
+    if not isinstance(fst, float) and not isinstance(fst, int):
+        raise Exception("Argument to div is not a number")
+
+    return reduce_proper_list(rest, _div_helper, fst)
 
 
-def exec_lt(expr: ConsCell):
+def exec_lt(expr: ConsCell) -> bool:
     fst = car(expr)
     snd = cadr(expr)
     if not isNumber(fst):
@@ -1025,7 +1057,7 @@ def exec_lt(expr: ConsCell):
     return fst < snd
 
 
-def exec_gt(expr: ConsCell):
+def exec_gt(expr: ConsCell) -> bool:
     fst = car(expr)
     snd = cadr(expr)
     if not isNumber(fst):
@@ -1035,13 +1067,13 @@ def exec_gt(expr: ConsCell):
     return fst > snd
 
 
-def exec_not(args: ConsCell | tuple[()]):
+def exec_not(args: ConsCell | Null) -> bool:
     if isPair(args):
         return not car(args)
     raise Exception("No arguments provided to `not`")
 
 
-def exec_cons(args: ConsCell | tuple[()]):
+def exec_cons(args: ConsCell | Null) -> ConsCell:
     if isPair(args):
         if isNull(cdr(args)):
             raise Exception("Only one argument provided to `cons`")
@@ -1067,19 +1099,26 @@ def exec_cdr(args: ConsCell) -> Expr:
     return cdr(args[0])
 
 
-def exec_reverse(args: ConsCell | tuple[()]):
+def exec_reverse(args: ConsCell | Null) -> ConsCell | Null:
     if isPair(args):
-        return reverse(car(args))
+        arg = car(args)
+        if isPair(arg):
+            return reverse(arg)
+        raise Exception("The argument to `reverse` must be a pair")
     raise Exception("No arguments provided to `reverse`")
 
 
-def exec_length(args: ConsCell | tuple[()]):
+def exec_length(args: ConsCell | Null) -> int:
     if isPair(args):
-        return length(car(args))
+        arg = car(args)
+        if isPair(arg) or isNull(arg):
+            return length(arg)
+        raise Exception("`length` only operates on proper lists!")
+
     raise Exception("No arguments provided to `length`")
 
 
-def _concat(list1: Expr, list2: ConsCell | tuple[()]) -> ConsCell | tuple[()]:
+def _concat(list1: Expr, list2: Expr) -> Expr:
     if isNull(list1):
         return list2
     if isNull(list2):
@@ -1091,7 +1130,7 @@ def _concat(list1: Expr, list2: ConsCell | tuple[()]) -> ConsCell | tuple[()]:
     return (car(list1), _concat(cdr(list1), list2))
 
 
-def exec_append(expr: ConsCell):
+def exec_append(expr: ConsCell) -> Expr:
     fst = car(expr)
     snd = cdr(expr)
     if isNull(snd):
@@ -1139,7 +1178,7 @@ def exec_newline(expr: Expr) -> Expr:
     return ()
 
 
-def exec_pretty_print(expr: ConsCell | tuple[()]) -> Expr:
+def exec_pretty_print(expr: ConsCell | Null) -> Expr:
     if isPair(expr):
         if isNull(cdr(expr)):
             pretty_print(car(expr))
