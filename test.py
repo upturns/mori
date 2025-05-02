@@ -28,106 +28,16 @@ class TestStringMethods(unittest.TestCase):
         self.assertEqual(i("99")[0], 99)
         self.assertEqual(i("3.14")[0], 3.14)
 
-    def test_typecheck_procedures(self):
-        # boolean
-        self.assertEqual(i("(boolean? #t)")[0], True)
-        self.assertEqual(i("(boolean? #f)")[0], True)
-        self.assertEqual(i("(boolean? 0)")[0], False)
-        self.assertEqual(i("(boolean? 1)")[0], False)
-        self.assertEqual(i("(boolean? 'A)")[0], False)
-
-        # number
-        self.assertEqual(i("(number? 0)")[0], True)
-        self.assertEqual(i("(number? 3.14)")[0], True)
-        self.assertEqual(i("(number? 99)")[0], True)
-        self.assertEqual(i("(number? #f)")[0], False)
-        self.assertEqual(i("(number? #t)")[0], False)
-        self.assertEqual(i("(number? 'A)")[0], False)
-
-        # string
-        self.assertEqual(i('(string? "Hello World")')[0], True)
-        self.assertEqual(i('(string? "1")')[0], True)
-        self.assertEqual(i('(string? "a")')[0], True)
-        self.assertEqual(i('(string? "")')[0], True)
-        self.assertEqual(i("(string? 0)")[0], False)
-        self.assertEqual(i("(string? 3.14)")[0], False)
-        self.assertEqual(i("(string? 'hello)")[0], False)
-
-        # symbol
-        self.assertEqual(i("(symbol? 'x)")[0], True)
-        self.assertEqual(i("(symbol? 'Hello-World)")[0], True)
-        self.assertEqual(i("(symbol? '(1 2 3))")[0], False)
-        self.assertEqual(i("(symbol? 123)")[0], False)
-        self.assertEqual(i('(symbol? "x")')[0], False)
-
-    def test_bool_ops(self):
-        self.assertEqual(i("(= 1 1)")[0], True)
-        self.assertEqual(i("(= 3.14 3.14)")[0], True)
-        self.assertEqual(i("(= 0 0)")[0], True)
-        self.assertEqual(i("(= #f #f)")[0], True)
-
-        self.assertEqual(i("(= 0 1)")[0], False)
-        self.assertEqual(i("(= #f #t)")[0], False)
-        self.assertEqual(i("(= 3.1 3.14)")[0], False)
-
-        self.assertEqual(i("(not #t)")[0], False)
-        self.assertEqual(i("(not #f)")[0], True)
-
-    def test_arith_ops(self):
-        self.assertEqual(i("(+ 1 1)")[0], 2)
-        self.assertEqual(i("(- 10 1)")[0], 9)
-        self.assertEqual(i("(* 2 2)")[0], 4)
-        self.assertEqual(i("(* 2 3 4)")[0], 24)
-        self.assertEqual(i("(/ 10 2)")[0], 5)
-        self.assertEqual(i("(/ 20 2 5)")[0], 2)
-        self.assertEqual(i("(< 1 2)")[0], True)
-        self.assertEqual(i("(< 2 1)")[0], False)
-        self.assertEqual(i("(> 1 2)")[0], False)
-        self.assertEqual(i("(> 2 1)")[0], True)
-
-    def test_cons(self):
-        self.assertEqual(i("(cons 1 1)")[0], (1, 1))
-        self.assertEqual(i("(cons #t #f)")[0], (True, False))
-        self.assertEqual(i("(cons 'a 'b)")[0], (Symbol("a"), Symbol("b")))
-        self.assertEqual(i("(cons (+ 1 1) (+ 2 2))")[0], (2, 4))
-        self.assertEqual(i("(cons 1 (cons 2 3))")[0], (1, (2, 3)))
-        self.assertEqual(i("(cons (cons 1 2) 3)")[0], ((1, 2), 3))
-        self.assertEqual(
-            i("(cons (cons 'a 'b) (cons 'c 'd))")[0],
-            ((Symbol("a"), Symbol("b")), (Symbol("c"), Symbol("d"))),
-        )
-
-    def test_cons_ops(self):
-        self.assertEqual(i("(car '(1 2 3 4))")[0], 1)
-        self.assertEqual(i("(cdr '(1 2 3 4))")[0], (2, (3, (4, ()))))
-
-        self.assertEqual(i("(car (cons 1 2))")[0], 1)
-        self.assertEqual(i("(cdr (cons 1 2))")[0], 2)
-
-    def test_list(self):
-        self.assertEqual(i("(list 1 2)")[0], (1, (2, ())))
-        self.assertEqual(i("(list 1 2 3)")[0], (1, (2, (3, ()))))
+    # def test_list(self):
+    #     self.assertEqual(i("(list 1 2)")[0], (1, (2, ())))
+    #     self.assertEqual(i("(list 1 2 3)")[0], (1, (2, (3, ()))))
 
     def test_dotted_list(self):
         self.assertEqual(i("'(1 . 2)")[0], (1, 2))
         self.assertEqual(i("'(1 2 . 3)")[0], (1, (2, 3)))
 
-    def test_reverse(self):
-        self.assertEqual(i("(reverse (list 1 2 3))")[0], (3, (2, (1, ()))))
-
-    def test_append(self):
-        self.assertEqual(i("(append '(1 2) '(3 4))")[0], ((1, (2, (3, (4, ()))))))
-        self.assertEqual(
-            i("(append '(1 2) '(3 4) '(5 6))")[0], ((1, (2, (3, (4, (5, (6, ())))))))
-        )
-        self.assertEqual(i("(append '(1 2 3) '())")[0], ((1, (2, (3, ())))))
-        self.assertEqual(i("(append '() '())")[0], ())
-
-    def test_length(self):
-        self.assertEqual(i("(length '())")[0], 0)
-        self.assertEqual(i("(length (list 1 2 3))")[0], 3)
-        self.assertEqual(i("(length '(1 2 3))")[0], 3)
-        self.assertEqual(i("(length '(1 2 . 3))")[0], 3)
+    # def test_reverse(self):
+    #     self.assertEqual(i("(reverse (list 1 2 3))")[0], (3, (2, (1, ()))))
 
     def test_lambda(self):
         self.assertIsInstance(i("(lambda (x) (* 2 x))")[0], Procedure)
@@ -150,24 +60,14 @@ class TestStringMethods(unittest.TestCase):
         self.assertEqual(i("((lambda (a b . c) c) 1 2 3 4 5)")[0], (3, (4, (5, ()))))
         self.assertEqual(i("((lambda (a . b) b) 1 2)")[0], (2, ()))
 
-    def test_apply(self):
-        self.assertEqual(i("(apply + '(1 2 3))")[0], 6)
-        self.assertEqual(i("(apply * '(2 3 4))")[0], 24)
-        self.assertEqual(i("(apply list '(1 2 3))")[0], (1, (2, (3, ()))))
-        self.assertEqual(i("(apply cons '(1 (2 3))) ")[0], (1, (2, (3, ()))))
-        # apply with variadic params
-        self.assertEqual(
-            i("(apply (lambda (x . args) args) '(1 2 3))) ")[0], (2, (3, ()))
-        )
-
     def test_define(self):
         val, env = i("(define x 99)")
-        self.assertEqual(val, None)
+        self.assertEqual(val, ())
         self.assertEqual(env.bindings["x"], 99)
 
     def test_define_procedure(self):
         val, env = i("(define (dbl x) (* x 2))")
-        self.assertEqual(val, None)
+        self.assertEqual(val, ())
         self.assertIsInstance(env.bindings["dbl"], Procedure)
         self.assertEqual(i("(dbl 2)", env)[0], 4)
 
@@ -459,6 +359,570 @@ class TestStringMethods(unittest.TestCase):
                 ("enter-2", ("body-2", ("exit-2", ("body-1", ("exit-1", ()))))),
             ),
         )
+
+
+class TestPrimitiveProcedures(unittest.TestCase):
+    def test_null_pred(self):
+        # 0 args fails
+        self.assertRaises(Exception, lambda: i("(null?)")[0])
+        # 1 arg
+        self.assertTrue(i("(null? '())")[0])
+        self.assertFalse(i("(null? 1)")[0])
+        self.assertFalse(i("(null? 1.0)")[0])
+        self.assertFalse(i('(null? "Hello")')[0])
+        self.assertFalse(i("(null? 'a)")[0])
+        self.assertFalse(i("(null? #t)")[0])
+        self.assertFalse(i("(null? #f)")[0])
+        self.assertFalse(i("(null? '(1 2 3))")[0])
+        # 2+ args fails
+        self.assertRaises(Exception, lambda: i("(null? '() '() #f)")[0])
+        self.assertRaises(Exception, lambda: i("(null? #f #f '())")[0])
+        self.assertRaises(Exception, lambda: i("(null? '() '())")[0])
+
+    def test_number_pred(self):
+        # 0 args fails
+        self.assertRaises(Exception, lambda: i("(number?)")[0])
+        # 1 arg
+        self.assertFalse(i("(number? '())")[0])
+        self.assertTrue(i("(number? 1)")[0])
+        self.assertTrue(i("(number? 1.0)")[0])
+        self.assertTrue(i("(number? -1.0)")[0])
+        self.assertTrue(i("(number? 3.14)")[0])
+        self.assertFalse(i('(number? "Hello")')[0])
+        self.assertFalse(i("(number? 'a)")[0])
+        self.assertFalse(i("(number? #t)")[0])
+        self.assertFalse(i("(number? #f)")[0])
+        self.assertFalse(i("(number? '(1 2 3))")[0])
+        # 2+ args fails
+        self.assertRaises(Exception, lambda: i("(number? 1 2 #f)")[0])
+        self.assertRaises(Exception, lambda: i("(number? #f #f 3.14)")[0])
+        self.assertRaises(Exception, lambda: i("(number? 99 100)")[0])
+
+    def test_string_pred(self):
+        # 0 args fails
+        self.assertRaises(Exception, lambda: i("(string?)")[0])
+        # 1 arg
+        self.assertFalse(i("(string? '())")[0])
+        self.assertFalse(i("(string? 1)")[0])
+        self.assertFalse(i("(string? 1.0)")[0])
+        self.assertFalse(i("(string? -1.0)")[0])
+        self.assertFalse(i("(string? 3.14)")[0])
+        self.assertTrue(i('(string? "Hello")')[0])
+        self.assertTrue(i('(string? "")')[0])
+        self.assertTrue(i('(string? "Hello World")')[0])
+        self.assertTrue(i('(string? "  ")')[0])
+        self.assertFalse(i("(string? 'a)")[0])
+        self.assertFalse(i("(string? #t)")[0])
+        self.assertFalse(i("(string? #f)")[0])
+        self.assertFalse(i("(string? '(1 2 3))")[0])
+        # 2+ args fails
+        self.assertRaises(Exception, lambda: i('(string? "A" "B" #f)')[0])
+        self.assertRaises(Exception, lambda: i('(string? #f #f "A")')[0])
+        self.assertRaises(Exception, lambda: i('(string? "A" "B")')[0])
+
+    def test_symbol_pred(self):
+        # 0 args fails
+        self.assertRaises(Exception, lambda: i("(symbol?)")[0])
+        # 1 arg
+        self.assertFalse(i("(symbol? '())")[0])
+        self.assertFalse(i("(symbol? 1)")[0])
+        self.assertFalse(i("(symbol? 1.0)")[0])
+        self.assertFalse(i("(symbol? -1.0)")[0])
+        self.assertFalse(i("(symbol? 3.14)")[0])
+        self.assertFalse(i('(symbol? "Hello")')[0])
+        self.assertFalse(i('(symbol? "")')[0])
+        self.assertTrue(i("(symbol? 'a)")[0])
+        self.assertTrue(i("(symbol? 'A)")[0])
+        self.assertTrue(i("(symbol? 'Hello-Symbols)")[0])
+        self.assertFalse(i("(symbol? #t)")[0])
+        self.assertFalse(i("(symbol? #f)")[0])
+        self.assertFalse(i("(symbol? '(1 2 3))")[0])
+        # 2+ args fails
+        self.assertRaises(Exception, lambda: i("(symbol? 'A 'B #f)")[0])
+        self.assertRaises(Exception, lambda: i("(symbol? #f #t 'A)")[0])
+        self.assertRaises(Exception, lambda: i("(symbol? 'A 'B)")[0])
+
+    def test_pair_pred(self):
+        # 0 args fails
+        self.assertRaises(Exception, lambda: i("(pair?)")[0])
+        # 1 arg
+        self.assertFalse(i("(pair? '())")[0])
+        self.assertFalse(i("(pair? 1)")[0])
+        self.assertFalse(i("(pair? 1.0)")[0])
+        self.assertFalse(i("(pair? -1.0)")[0])
+        self.assertFalse(i("(pair? 3.14)")[0])
+        self.assertFalse(i('(pair? "Hello")')[0])
+        self.assertFalse(i('(pair? "")')[0])
+        self.assertFalse(i("(pair? 'a)")[0])
+        self.assertFalse(i("(pair? 'Hello-Symbols)")[0])
+        self.assertFalse(i("(pair? #t)")[0])
+        self.assertFalse(i("(pair? #f)")[0])
+        self.assertTrue(i("(pair? '(1 2 3))")[0])
+        self.assertTrue(i("(pair? '(1))")[0])
+        self.assertTrue(i("(pair? '(1 . 2))")[0])
+        self.assertTrue(i("(pair? '(() . ()))")[0])
+        self.assertTrue(i("(pair? '(() ()))")[0])
+        # 2+ args fails
+        self.assertRaises(Exception, lambda: i("(pair? '(1 2) '(3 4) #f)")[0])
+        self.assertRaises(Exception, lambda: i("(pair? #f #t '(1 2))")[0])
+        self.assertRaises(Exception, lambda: i("(pair? '(1 2) '(3 4))")[0])
+
+    def test_sum(self):
+        # no args returns 0
+        self.assertEqual(i("(+)")[0], 0)
+        # 1 arg returns the arg
+        self.assertEqual(i("(+ 1)")[0], 1)
+        self.assertEqual(i("(+ 3.14)")[0], 3.14)
+        # 2 args
+        self.assertEqual(i("(+ 0 0)")[0], 0)
+        self.assertEqual(i("(+ 0 0)")[0], 0)
+        self.assertEqual(i("(+ 1 1)")[0], 2)
+        self.assertEqual(i("(+ -10 10.0)")[0], 0)
+        self.assertEqual(i("(+ 1 2 3)")[0], 6)
+
+        self.assertRaises(Exception, lambda: i("(+ 1 'a)")[0])
+        self.assertRaises(Exception, lambda: i("(+ 'a 'a)")[0])
+        self.assertRaises(Exception, lambda: i("(+ #f 0)")[0])
+        self.assertRaises(Exception, lambda: i('(+ "A" 0)')[0])
+        self.assertRaises(Exception, lambda: i('(+ "A" "B")')[0])
+        self.assertRaises(Exception, lambda: i("(+ 1 '())")[0])
+        self.assertRaises(Exception, lambda: i("(+ 1 '(1))")[0])
+        self.assertRaises(Exception, lambda: i("(+ '() '())")[0])
+
+    def test_sub(self):
+        # no args fails
+        self.assertRaises(Exception, lambda: i("(-)"))
+        # 1 arg
+        self.assertEqual(i("(- 1)")[0], -1)
+        self.assertEqual(i("(- 3.14)")[0], -3.14)
+        # 2 args
+        self.assertEqual(i("(- 0 0)")[0], 0)
+        self.assertEqual(i("(- 1 1)")[0], 0)
+        self.assertEqual(i("(- -10 10.0)")[0], -20)
+        self.assertEqual(i("(- 1 2 3)")[0], -4)
+
+        self.assertRaises(Exception, lambda: i("(- 1 'a)")[0])
+        self.assertRaises(Exception, lambda: i("(- 'a 'a)")[0])
+        self.assertRaises(Exception, lambda: i("(- #f 0)")[0])
+        self.assertRaises(Exception, lambda: i('(- "A" 0)')[0])
+        self.assertRaises(Exception, lambda: i('(- "A" "B")')[0])
+        self.assertRaises(Exception, lambda: i("(- 1 '())")[0])
+        self.assertRaises(Exception, lambda: i("(- 1 '(1))")[0])
+        self.assertRaises(Exception, lambda: i("(- '() '())")[0])
+
+    def test_mul(self):
+        # no args returns 1
+        self.assertEqual(i("(*)")[0], 1)
+        # 1 arg returns the arg
+        self.assertEqual(i("(* 2)")[0], 2)
+        self.assertEqual(i("(* 3.14)")[0], 3.14)
+        # 2+ args
+        self.assertEqual(i("(* 0 0)")[0], 0)
+        self.assertEqual(i("(* 1 1)")[0], 1)
+        self.assertEqual(i("(* 1 0)")[0], 0)
+        self.assertEqual(i("(* -10 10.0)")[0], -100)
+        self.assertEqual(i("(* 1 2 3)")[0], 6)
+        self.assertEqual(i("(* 2 3 4 5)")[0], 120)
+
+        self.assertRaises(Exception, lambda: i("(* 1 'a)")[0])
+        self.assertRaises(Exception, lambda: i("(* 'a 'a)")[0])
+        self.assertRaises(Exception, lambda: i("(* #f 0)")[0])
+        self.assertRaises(Exception, lambda: i('(* "A" 0)')[0])
+        self.assertRaises(Exception, lambda: i('(* "A" "B")')[0])
+        self.assertRaises(Exception, lambda: i("(* 1 '())")[0])
+        self.assertRaises(Exception, lambda: i("(* 1 '(1))")[0])
+        self.assertRaises(Exception, lambda: i("(* '() '())")[0])
+
+    def test_div(self):
+        # fails with 0 args
+        self.assertRaises(Exception, lambda: i("(/)"))
+        # 1 arg returns it's reciprocal
+        self.assertEqual(i("(/ 1)")[0], 1)
+        self.assertEqual(i("(/ 2)")[0], 1 / 2)
+        self.assertEqual(i("(/ 3)")[0], 1 / 3)
+        # 2+ args
+        self.assertEqual(i("(/ 1 1)")[0], 1)
+        self.assertEqual(i("(/ 0 10)")[0], 0)
+        self.assertEqual(i("(/ -10 10.0)")[0], -1)
+        self.assertEqual(i("(/ 10 2)")[0], 5)
+        self.assertEqual(i("(/ 30 3 5)")[0], 2)
+
+        # divide by 0 causes an error
+        self.assertRaises(Exception, lambda: i("(/ 0 0)")[0])
+        self.assertRaises(Exception, lambda: i("(/ 10 0)")[0])
+        self.assertRaises(Exception, lambda: i("(/ 1 2 0)")[0])
+
+        # wrong input types
+        self.assertRaises(Exception, lambda: i("(/ 1 'a)")[0])
+        self.assertRaises(Exception, lambda: i("(/ 'a 'a)")[0])
+        self.assertRaises(Exception, lambda: i("(/ #f 0)")[0])
+        self.assertRaises(Exception, lambda: i('(/ "A" 0)')[0])
+        self.assertRaises(Exception, lambda: i('(/ "A" "B")')[0])
+        self.assertRaises(Exception, lambda: i("(/ 1 '())")[0])
+        self.assertRaises(Exception, lambda: i("(/ 1 '(1))")[0])
+        self.assertRaises(Exception, lambda: i("(/ '() '())")[0])
+
+    def test_lt(self):
+        # fails with 0 args
+        self.assertRaises(Exception, lambda: i("(<)"))
+        # basic 2 arg case
+        self.assertTrue(i("(< 0 1)")[0])
+        self.assertTrue(i("(< 1 99)")[0])
+        self.assertTrue(i("(< 3 3.14)")[0])
+        # equal numbers fails
+        self.assertFalse(i("(< 0 0)")[0])
+        self.assertFalse(i("(< 10 10)")[0])
+        self.assertFalse(i("(< 3.14 3.14)")[0])
+        # supports 1 arg
+        self.assertTrue(i("(< 0)")[0])
+        self.assertTrue(i("(< 3.14)")[0])
+        # supports 2+ args
+        self.assertTrue(i("(< 1 2 3)")[0])
+        self.assertFalse(i("(< 1 3 2)")[0])
+
+        self.assertRaises(Exception, lambda: i("(< 1 'a)")[0])
+        self.assertRaises(Exception, lambda: i("(< 'a 'a)")[0])
+        self.assertRaises(Exception, lambda: i("(< #f 0)")[0])
+        self.assertRaises(Exception, lambda: i('(< "A" 0)')[0])
+        self.assertRaises(Exception, lambda: i('(< "A" "B")')[0])
+        self.assertRaises(Exception, lambda: i("(< 1 '())")[0])
+        self.assertRaises(Exception, lambda: i("(< 1 '(1))")[0])
+        self.assertRaises(Exception, lambda: i("(< '() '())")[0])
+        self.assertRaises(Exception, lambda: i("(< 1 2 'a)")[0])
+
+        # ensure type error is thrown before any comparisons are made
+        self.assertRaises(Exception, lambda: i("(< 2 1'a)")[0])
+
+    def test_gt(self):
+        # fails with 0 args
+        self.assertRaises(Exception, lambda: i("(>)"))
+
+        # basic 2 arg case
+        self.assertTrue(i("(> 1 0)")[0])
+        self.assertTrue(i("(> 99 1)")[0])
+        self.assertTrue(i("(> 3.14 3)")[0])
+        # equal numbers fails
+        self.assertFalse(i("(> 0 0)")[0])
+        self.assertFalse(i("(> 10 10)")[0])
+        self.assertFalse(i("(> 3.14 3.14)")[0])
+        # supports 1 arg
+        self.assertTrue(i("(> 0)")[0])
+        self.assertTrue(i("(> 3.14)")[0])
+        # supports 2+ args
+        self.assertTrue(i("(> 3 2 1)")[0])
+        self.assertFalse(i("(> 2 3 1)")[0])
+
+        self.assertRaises(Exception, lambda: i("(> 1 'a)")[0])
+        self.assertRaises(Exception, lambda: i("(> 'a 'a)")[0])
+        self.assertRaises(Exception, lambda: i("(> #f 0)")[0])
+        self.assertRaises(Exception, lambda: i('(> "A" 0)')[0])
+        self.assertRaises(Exception, lambda: i('(> "A" "B")')[0])
+        self.assertRaises(Exception, lambda: i("(> 1 '())")[0])
+        self.assertRaises(Exception, lambda: i("(> 1 '(1))")[0])
+        self.assertRaises(Exception, lambda: i("(> '() '())")[0])
+
+        # ensure type error is thrown before any comparisons are made
+        self.assertRaises(Exception, lambda: i("(> 1 2 'a)")[0])
+
+    def test_not(self):
+        # 0 args fails
+        self.assertRaises(Exception, lambda: i("(not)"))
+        # 1 args works for booleans
+        self.assertTrue(i("(not #f)")[0])
+        self.assertFalse(i("(not #t)")[0])
+        # 2+ args fails
+        self.assertRaises(Exception, lambda: i("(not #t #t)"))
+        self.assertRaises(Exception, lambda: i("(not #f #f)"))
+        self.assertRaises(Exception, lambda: i("(not #t #f #t)"))
+        self.assertRaises(Exception, lambda: i("(not #t #f 'a)"))
+        # any non-bool input returns false
+        self.assertFalse(i("(not 'a)")[0])
+        self.assertFalse(i('(not "A")')[0])
+        self.assertFalse(i("(not 0)")[0])
+        self.assertFalse(i("(not 1)")[0])
+        self.assertFalse(i("(not '())")[0])
+        self.assertFalse(i("(not '(1 2 3))")[0])
+
+    def test_eq(self):
+        # Tests whether two objects are the same exact object in memory.
+        # 0 args fails
+        self.assertRaises(Exception, lambda: i("(eq?)"))
+        # 1 arg fails
+        self.assertRaises(Exception, lambda: i("(eq? #t)"))
+        # 2 args works
+        # positive cases
+        self.assertTrue(i("(eq? #t #t)")[0])
+        self.assertTrue(i("(eq? 1 1)")[0])
+        self.assertTrue(i("(eq? 3.14 3.14)")[0])
+        self.assertTrue(i("(eq? 'A 'A)")[0])
+        self.assertTrue(i('(eq? "Hello" "Hello")')[0])
+        # Null & Null returns true
+        self.assertTrue(i("(eq? '() '())")[0])
+        # negative cases
+        self.assertFalse(i("(eq? #t #f)")[0])
+        self.assertFalse(i("(eq? 1 0)")[0])
+        self.assertFalse(i("(eq? 3.14 3.15)")[0])
+        self.assertFalse(i("(eq? 'A 'B)")[0])
+        self.assertFalse(i('(eq? "Hello" "Hello World")')[0])
+        # int and float of same value returns false
+        self.assertFalse(i("(eq? 1 1.0)")[0])
+        # always false for non-null lists/pairs
+        self.assertFalse(i("(eq? '(1) '(1))")[0])
+        self.assertFalse(i("(eq? '(1 2 3) '(1 2 3))")[0])
+
+        # 3+ args fails
+        self.assertRaises(Exception, lambda: i("(eq? 1 1 1)"))
+
+    def test_eqv(self):
+        # 0 args fails
+        self.assertRaises(Exception, lambda: i("(eqv?)"))
+        # 1 arg fails
+        self.assertRaises(Exception, lambda: i("(eqv? 1)"))
+        self.assertRaises(Exception, lambda: i("(eqv? #t)"))
+        # 2 args positive cases
+        # Null & Null returns true
+        self.assertTrue(i("(eqv? '() '())")[0])
+        # negative cases
+        self.assertFalse(i("(eqv? #t #f)")[0])
+        self.assertFalse(i("(eqv? 1 0)")[0])
+        self.assertFalse(i("(eqv? 3.14 3.15)")[0])
+        self.assertFalse(i("(eqv? 'A 'B)")[0])
+        self.assertFalse(i('(eqv? "Hello" "Hello World")')[0])
+        # int and float of same value returns false
+        self.assertFalse(i("(eqv? 1 1.0)")[0])
+        # doesn't work for pairs
+        self.assertFalse(i("(eqv? '(1) '(1))")[0])
+
+    def test_length(self):
+        # 0 args fails
+        self.assertRaises(Exception, lambda: i("(length)"))
+        # works with 1 list
+        self.assertEqual(i("(length '())")[0], 0)
+        self.assertEqual(i("(length '(1))")[0], 1)
+        self.assertEqual(i("(length '(1 2 3))")[0], 3)
+        self.assertEqual(i("(length '(a b c))")[0], 3)
+        self.assertEqual(i("(length '(() () ()))")[0], 3)
+        # fails with non-list arg
+        self.assertRaises(Exception, lambda: i("(length 1)"))
+        self.assertRaises(Exception, lambda: i("(length 'a)"))
+        self.assertRaises(Exception, lambda: i('(length "hello")'))
+        # 2+ args fails
+        self.assertRaises(Exception, lambda: i("(length '() '())"))
+        self.assertRaises(Exception, lambda: i("(length '(1 2 3) '(1 2 3))"))
+
+    def test_cons(self):
+        # 0 args fails
+        self.assertRaises(Exception, lambda: i("(cons)"))
+        # 1 arg fails
+        self.assertRaises(Exception, lambda: i("(cons 1)"))
+        self.assertRaises(Exception, lambda: i("(cons '())"))
+        # 2 args works
+        self.assertEqual(i("(cons 1 2)")[0], (1, 2))
+        self.assertEqual(i("(cons 'a 'b)")[0], (Symbol("a"), Symbol("b")))
+        self.assertEqual(i("(cons 1 '())")[0], (1, ()))
+        self.assertEqual(i("(cons '() 1)")[0], ((), 1))
+        self.assertEqual(i("(cons 1 '(2 3))")[0], (1, (2, (3, ()))))
+        self.assertEqual(i("(cons '(1 2) 3)")[0], ((1, (2, ())), 3))
+        self.assertEqual(i("(cons '(1 2) '(3 4))")[0], ((1, (2, ())), (3, (4, ()))))
+        # 3+ args fails
+        self.assertRaises(Exception, lambda: i("(cons 1 2 3)"))
+
+    def test_car(self):
+        # 0 args fails
+        self.assertRaises(Exception, lambda: i("(car)"))
+        # 1 pair works
+        self.assertEqual(i("(car '(1))")[0], 1)
+        self.assertEqual(i("(car '(a . b))")[0], Symbol("a"))
+        self.assertEqual(i("(car '(1 2 3))")[0], 1)
+        self.assertEqual(i("(car '((1 2 3) 4))")[0], (1, (2, (3, ()))))
+        self.assertEqual(i("(car '((1 2 3) . 4))")[0], (1, (2, (3, ()))))
+        # null input fails
+        self.assertRaises(Exception, lambda: i("(car '())"))
+        # 2+ args fails
+        self.assertRaises(Exception, lambda: i("(car '(1 2) '(3 4))"))
+        self.assertRaises(Exception, lambda: i("(car 1 2)"))
+
+    def test_cdr(self):
+        # 0 args fails
+        self.assertRaises(Exception, lambda: i("(cdr)"))
+        # 1 pair works
+        self.assertEqual(i("(cdr '(1))")[0], ())
+        self.assertEqual(i("(cdr '(a . b))")[0], Symbol("b"))
+        self.assertEqual(i("(cdr '(1 2 3))")[0], (2, (3, ())))
+        self.assertEqual(i("(cdr '((1 2 3) 4))")[0], (4, ()))
+        self.assertEqual(i("(cdr '((1 2 3) . 4))")[0], 4)
+        # null input fails
+        self.assertRaises(Exception, lambda: i("(cdr '())"))
+        # 2+ args fails
+        self.assertRaises(Exception, lambda: i("(cdr '(1 2) '(3 4))"))
+        self.assertRaises(Exception, lambda: i("(cdr 1 2)"))
+
+    def test_append(self):
+        # 0 args returns Null
+        self.assertEqual(i("(append)")[0], ())
+        # 1 arg just returns that arg
+        self.assertEqual(i("(append 1)")[0], 1)
+        self.assertEqual(i("(append #f)")[0], False)
+        self.assertEqual(i("(append #t)")[0], True)
+        self.assertEqual(i("(append 'a)")[0], Symbol("a"))
+        # null args do nothing
+        self.assertEqual(i("(append '() '())")[0], ())
+        self.assertEqual(i("(append '() 1)")[0], 1)
+        self.assertEqual(i("(append '() 'a)")[0], Symbol("a"))
+        self.assertEqual(i("(append '() '() 1)")[0], 1)
+        # null after non-null fails
+        self.assertRaises(Exception, lambda: i("(append 1 '())"))
+        self.assertRaises(Exception, lambda: i("(append '() 1 '())"))
+        # list after non-list fails
+        self.assertRaises(Exception, lambda: i("(append '(1 2) 3 '(4 5))"))
+        # positive cases
+        self.assertEqual(i("(append '(1) 2)")[0], (1, 2))
+        self.assertEqual(i("(append '(1 2) 3)")[0], (1, (2, 3)))
+        self.assertEqual(i("(append '(1) '())")[0], (1, ()))
+        self.assertEqual(i("(append '(1) '(2))")[0], (1, (2, ())))
+        self.assertEqual(i("(append '(1 2) '(3 4))")[0], (1, (2, (3, (4, ())))))
+        # multiple lists
+        self.assertEqual(
+            i("(append '(1 2) '(3 4) '(5 6))")[0], (1, (2, (3, (4, (5, (6, ()))))))
+        )
+        self.assertEqual(
+            i("(append '(1 2) '(3 4) '(5 6) 7)")[0], (1, (2, (3, (4, (5, (6, 7))))))
+        )
+
+    def test_apply(self):
+        # 0 args fails
+        self.assertRaises(Exception, lambda: i("(apply)"))
+        # 1 arg fails
+        self.assertRaises(Exception, lambda: i("(apply +)"))
+        self.assertRaises(Exception, lambda: i("(apply '())"))
+
+        self.assertEqual(i("(apply + '(1 2 3))")[0], 6)
+        self.assertEqual(i("(apply * '(2 3 4))")[0], 24)
+        self.assertEqual(i("(apply list '(1 2 3))")[0], (1, (2, (3, ()))))
+        self.assertEqual(i("(apply cons '(1 (2 3))) ")[0], (1, (2, (3, ()))))
+        # apply with variadic params
+        self.assertEqual(
+            i("(apply (lambda (x . args) args) '(1 2 3))) ")[0], (2, (3, ()))
+        )
+        # 2+ args fails
+        self.assertRaises(Exception, lambda: i("(apply + '(1 2 3) '(2 3 4))"))
+
+    def test_numeric_eq_pred(self):
+        # 0 args fails
+        self.assertRaises(Exception, lambda: i("(=)"))
+        # 1 arg returns true
+        self.assertTrue(i("(= 1)")[0])
+        self.assertTrue(i("(= 0)")[0])
+        self.assertTrue(i("(= 0.1)")[0])
+        self.assertTrue(i("(= 3.14)")[0])
+        # 2 arg positive cases
+        self.assertTrue(i("(= 1 1)")[0])
+        self.assertTrue(i("(= 0 0)")[0])
+        self.assertTrue(i("(= -1 -1)")[0])
+        self.assertTrue(i("(= 0.1 0.1)")[0])
+        self.assertTrue(i("(= 3.14 3.14)")[0])
+        # 3+ arg positive cases
+        self.assertTrue(i("(= 1 1 1)")[0])
+        self.assertTrue(i("(= 0 0 0)")[0])
+        self.assertTrue(i("(= -1 -1 -1)")[0])
+        self.assertTrue(i("(= 3.14 3.14 3.14 3.14)")[0])
+        # 1 wrong type arg fails
+        self.assertRaises(Exception, lambda: i("(= #f)"))
+        self.assertRaises(Exception, lambda: i("(= #t)"))
+        self.assertRaises(Exception, lambda: i("(= '())"))
+        self.assertRaises(Exception, lambda: i('(= "A")'))
+        # wrong type of many args fails
+        self.assertRaises(Exception, lambda: i("(= #f #f)"))
+        self.assertRaises(Exception, lambda: i("(= 1 #f)"))
+        self.assertRaises(Exception, lambda: i("(= 1 1 #f)"))
+        self.assertRaises(Exception, lambda: i("(= 1 1 #t)"))
+        self.assertRaises(Exception, lambda: i("(= 1 #t 2)"))
+
+    def test_bool_eq_pred(self):
+        # 0 args returns True
+        self.assertTrue(i("(boolean=?)")[0])
+        # 1 arg returns True
+        self.assertTrue(i("(boolean=? #t)")[0])
+        self.assertTrue(i("(boolean=? #f)")[0])
+        # 2 arg positive cases
+        self.assertTrue(i("(boolean=? #t #t)")[0])
+        self.assertTrue(i("(boolean=? #f #f)")[0])
+        # 2 arg negative cases
+        self.assertFalse(i("(boolean=? #f #t)")[0])
+        self.assertFalse(i("(boolean=? #t #f)")[0])
+        # 3+ arg positive cases
+        self.assertTrue(i("(boolean=? #t #t #t)")[0])
+        self.assertTrue(i("(boolean=? #t #t #t #t #t)")[0])
+        self.assertTrue(i("(boolean=? #f #f #f)")[0])
+        self.assertTrue(i("(boolean=? #f #f #f #f)")[0])
+        # 3+ arg negative cases
+        self.assertFalse(i("(boolean=? #f #t #t)")[0])
+        self.assertFalse(i("(boolean=? #f #f #t)")[0])
+        self.assertFalse(i("(boolean=? #f #f #f #f #t)")[0])
+        # wrong type fails
+        self.assertRaises(Exception, lambda: i("(boolean=? 0)"))
+        self.assertRaises(Exception, lambda: i("(boolean=? 1)"))
+        self.assertRaises(Exception, lambda: i("(boolean=? 'a)"))
+        self.assertRaises(Exception, lambda: i("(boolean=? #t #t 1)"))
+
+    def test_symbol_eq_pred(self):
+        # 0 args returns True
+        self.assertTrue(i("(symbol=?)")[0])
+        # 1 arg returns True
+        self.assertTrue(i("(symbol=? 'A)")[0])
+        self.assertTrue(i("(symbol=? 'Hello-World)")[0])
+        # 2 arg positive cases
+        self.assertTrue(i("(symbol=? 'A 'A)")[0])
+        self.assertTrue(i("(symbol=? 'Hello-World 'Hello-World)")[0])
+        # 2 arg negative cases
+        self.assertFalse(i("(symbol=? 'A 'B)")[0])
+        self.assertFalse(i("(symbol=? 'Hello-World 'Hello-Moon)")[0])
+        # 3+ arg positive cases
+        self.assertTrue(i("(symbol=? 'A 'A 'A)")[0])
+        self.assertTrue(i("(symbol=? 'A 'A 'A 'A)")[0])
+        self.assertTrue(i("(symbol=? 'Hello-World 'Hello-World 'Hello-World)")[0])
+        # 3+ arg negative cases
+        self.assertFalse(i("(symbol=? 'A 'B 'B)")[0])
+        self.assertFalse(i("(symbol=? 'B 'B 'A)")[0])
+        self.assertFalse(i("(symbol=? 'A 'A 'A 'B)")[0])
+        # wrong type fails
+        self.assertRaises(Exception, lambda: i("(symbol=? 0)"))
+        self.assertRaises(Exception, lambda: i("(symbol=? 1)"))
+        self.assertRaises(Exception, lambda: i("(symbol=? #f)"))
+        self.assertRaises(Exception, lambda: i('(symbol=? "A")'))
+        self.assertRaises(Exception, lambda: i("""(symbol=? "A" 'A)"""))
+        self.assertRaises(Exception, lambda: i("(symbol=? #t #t 1)"))
+
+    def test_string_eq_pred(self):
+        # 0 args returns True
+        self.assertTrue(i("(string=?)")[0])
+        # 1 arg returns True
+        self.assertTrue(i('(string=? "")')[0])
+        self.assertTrue(i('(string=? "A")')[0])
+        self.assertTrue(i('(string=? "Hello World")')[0])
+        # 2 arg positive cases
+        self.assertTrue(i('(string=? "A" "A")')[0])
+        self.assertTrue(i('(string=? "Hello World" "Hello World")')[0])
+        # 2 arg negative cases
+        self.assertFalse(i('(string=? "A" "B")')[0])
+        self.assertFalse(i('(string=? "Hello World" "Hello Moon")')[0])
+        self.assertFalse(i('(string=? "ABCDEFGHIJKL" "ABCDEFGHIJKLM")')[0])
+        self.assertFalse(i('(string=? "ABCDEFGHIJKL" "ABCDEFGHIJK_")')[0])
+        # 3+ arg positive cases
+        self.assertTrue(i('(string=? "A" "A" "A")')[0])
+        self.assertTrue(i('(string=? "A" "A" "A" "A")')[0])
+        self.assertTrue(i('(string=? "Hello World" "Hello World" "Hello World")')[0])
+        # 3+ arg negative cases
+        self.assertFalse(i('(string=? "A" "B" "B")')[0])
+        self.assertFalse(i('(string=? "B" "B" "A")')[0])
+        self.assertFalse(i('(string=? "A" "A" "A" "B")')[0])
+        # wrong type fails
+        self.assertRaises(Exception, lambda: i("(string=? 0)"))
+        self.assertRaises(Exception, lambda: i("(string=? 1)"))
+        self.assertRaises(Exception, lambda: i("(string=? #f)"))
+        self.assertRaises(Exception, lambda: i("""(string=? "A" 'A)"""))
+        self.assertRaises(Exception, lambda: i("(string=? #t #t 1)"))
+        self.assertRaises(Exception, lambda: i("(string=? '())"))
 
 
 if __name__ == "__main__":

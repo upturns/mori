@@ -33,8 +33,9 @@ Primitive Procedures:
 """
 
 import re
-from typing import Callable, TypeGuard, TypeVar
+from typing import Callable, TypeGuard, TypeVar, Union, cast
 import logging
+from functools import reduce
 
 
 grey = "\x1b[90;20m"
@@ -145,8 +146,19 @@ class OutPort:
         self.file = file
 
 
-ConsCell = tuple["Expr", "Expr"]
+P = TypeVar("P", bound="Expr")
+Q = TypeVar("Q", bound="Expr")
+
+
+A = TypeVar("A", bound="Expr")
+B = TypeVar("B", bound="Expr")
+ConsCell = tuple[A, B]
+
 Null = tuple[()]
+L = TypeVar("L", "Expr", Null)
+ProperList = Union[ConsCell[L, "ProperList[L]"], Null]
+# ProperList = tuple["Expr", Null | "ProperList"]
+
 
 Expr = (
     int
@@ -156,6 +168,7 @@ Expr = (
     | Procedure
     | Error
     | ConsCell
+    | ProperList
     | Callable[..., "Expr"]
     | InPort
     | OutPort
@@ -301,11 +314,12 @@ def cons(p: Expr, q: Expr) -> ConsCell:
     return (p, q)
 
 
-def car(args: ConsCell) -> Expr:
+def car[P, Q](args: tuple[P, Q]) -> P:
     return args[0]
 
 
-def cdr(args: ConsCell) -> Expr:
+# def cdr(args: ConsCell) -> Expr:
+def cdr[P, Q](args: tuple[P, Q]) -> Q:
     return args[1]
 
 
@@ -946,138 +960,290 @@ def evaluate(expr: Expr, env: Env, cont: InterpCont) -> Thunk:
 
 def exec_isPair(args: ConsCell | Null):
     if isPair(args):
+        if not isNull(cdr(args)):
+            raise Exception("Too many arguments provided to `pair?`")
         return isPair(car(args))
     raise Exception("No arguments provided to `pair?`")
 
 
 def exec_isNull(args: ConsCell | Null):
     if isPair(args):
+        if not isNull(cdr(args)):
+            raise Exception("Too many arguments provided to `null?`")
         return isNull(car(args))
     raise Exception("No arguments provided to `null?`")
 
 
 def exec_isNumber(args: ConsCell | Null):
     if isPair(args):
+        if not isNull(cdr(args)):
+            raise Exception("Too many arguments provided to `number?`")
         return isNumber(car(args))
     raise Exception("No arguments provided to `number?`")
 
 
 def exec_isSymbol(args: ConsCell | Null):
     if isPair(args):
+        if not isNull(cdr(args)):
+            raise Exception("Too many arguments provided to `symbol?`")
         return isinstance(car(args), Symbol)
     raise Exception("No arguments provided to `symbol?`")
 
 
 def exec_isBool(args: ConsCell | Null):
     if isPair(args):
+        if not isNull(cdr(args)):
+            raise Exception("Too many arguments provided to `boolean?`")
         return isinstance(car(args), bool)
     raise Exception("No arguments provided to `boolean?`")
 
 
 def exec_isString(args: ConsCell | Null):
     if isPair(args):
+        if not isNull(cdr(args)):
+            raise Exception("Too many arguments provided to `string?`")
         return isinstance(car(args), str)
     raise Exception("No arguments provided to `string?`")
 
 
 def exec_isAtom(args: ConsCell | Null):
     if isPair(args):
+        if not isNull(cdr(args)):
+            raise Exception("Too many arguments provided to `atom?`")
         return not isPair(car(args))
     raise Exception("No arguments provided to `atom?`")
 
 
+def exec_numeric_eq(args_expr: ConsCell):
+    args = cons_list_to_python_list(args_expr)
+    for arg in args:
+        if not isNumber(arg):
+            raise Exception("`=` requires numeric inputs, but received: {}")
+    args = cast(list[int | float], args)
+    if len(args) == 0:
+        raise Exception("No args provided to `=`")
+    fst = args[0]
+    for val in args[1:]:
+        if val != fst:
+            return False
+    return True
+
+
+def exec_bool_eq(args_expr: ConsCell):
+    """Returns #t if all the arguments are #t or all are #f."""
+    args = cons_list_to_python_list(args_expr)
+    for arg in args:
+        if not isinstance(arg, bool):
+            raise Exception("`bool=?` requires bool inputs, but received: {}")
+    args = cast(list[bool], args)
+    if len(args) == 0:
+        return True
+    fst = args[0]
+    for val in args[1:]:
+        if val != fst:
+            return False
+    return True
+
+
+def exec_symbol_eq(args_expr: ConsCell):
+    """Returns #t if all the arguments have the same naems in the sense of string=?"""
+    args = cons_list_to_python_list(args_expr)
+
+    if len(args) == 0:
+        return True
+
+    for arg in args:
+        if not isinstance(arg, Symbol):
+            raise Exception("`symbol=?` requires bool inputs, but received: {}")
+    args = cast(list[bool], args)
+    fst = args[0]
+    for val in args[1:]:
+        if val != fst:
+            return False
+    return True
+
+
+def exec_string_eq(args_expr: ConsCell):
+    """
+    Returns #t if all the strings are:
+    - the same length and
+    - contain exactly the same characters in the same positions
+    """
+    args = cons_list_to_python_list(args_expr)
+    if len(args) == 0:
+        return True
+    for arg in args:
+        if not isinstance(arg, str):
+            raise Exception("`string=?` requires str inputs, but received: {}")
+    args = cast(list[bool], args)
+    fst = args[0]
+    for val in args[1:]:
+        if val != fst:
+            return False
+    return True
+
+
 def exec_eq(args: ConsCell):
+    """
+    The most-discriminating equivalence predicate, relies on pointer-equivalence.
+
+    Undefined for:
+    Pairs (eq? '(a) '(a))
+    Strings (eq? "A" "A")
+    Numbers (eq? 2 2)
+    """
     fst = car(args)
     snd = cadr(args)
-    return fst == snd
+    if not isNull(cdr(cdr(args))):
+        raise Exception("More than 2 arguments provided to eq?")
+    if isNull(fst) and isNull(snd):
+        return True
+    elif isPair(fst) or isPair(snd):
+        return False
+    elif isinstance(fst, float) and isinstance(snd, float):
+        # undefined, but this is better than returning false
+        return fst == snd
+    elif isinstance(fst, int) and isinstance(snd, int):
+        # undefined, but this is better than returning false
+        return fst == snd
+    elif isinstance(fst, Symbol) and isinstance(snd, Symbol):
+        return fst == snd
+    elif isinstance(fst, str) and isinstance(snd, str):
+        # undefined, but this is better than returning false
+        return fst == snd
+
+    return False
 
 
-def exec_add(args: ConsCell):
-    # todo: verify 2+ args
-    def _add_helper(curr: Expr, accum: int | float):
-        if not isNumber(curr):
-            raise Exception("Argument to add is not a number")
-        return curr + accum
-
-    return reduce_proper_list(args, _add_helper, 0)
-
-
-def exec_sub(args: ConsCell):
-    # todo: verify 2+ args
-    def _sub_helper(curr: Expr, accum: int | float):
-        if not isNumber(curr):
-            raise Exception("Argument to sub is not a number")
-        return accum - curr
-
+def exec_eqv(args: ConsCell):
+    """
+    Returns true if 2 values are normally considered the same object.
+    """
     fst = car(args)
-    rest = cdr(args)
-
-    if not isNumber(fst):
-        raise Exception("Argument so sub is not a number")
-
-    if not isPair(rest):
-        raise Exception("Malformed args for `sub`")
-
-    return reduce_proper_list(rest, _sub_helper, fst)
-
-
-def exec_mul(args: ConsCell):
-    # todo: verify 2+ args
-    def _mul_helper(curr, accum):
-        return curr * accum
-
-    return reduce_proper_list(args, _mul_helper, 1)
+    snd = cadr(args)
+    if not isNull(cdr(cdr(args))):
+        raise Exception("More than 2 arguments provided to eqv?")
+    if isNull(fst) and isNull(snd):
+        return True
+    elif isPair(fst) or isPair(snd):
+        return False
+    elif type(fst) is type(snd):
+        return fst == snd
+    return False
 
 
-def exec_div(args: ConsCell) -> int | float:
-    # todo: verify 2+ args
-    def _div_helper(curr: Expr, accum: float) -> float:
-        if not isinstance(curr, float) and not isinstance(curr, int):
-            raise Exception("!")
-        return accum / curr
-
-    rest = cdr(args)
-    if not isPair(rest):
-        raise Exception("Malformed args for `div`")
-
-    fst = car(args)
-    if not isinstance(fst, float) and not isinstance(fst, int):
-        raise Exception("Argument to div is not a number")
-
-    return reduce_proper_list(rest, _div_helper, fst)
+def exec_add(args_expr: ConsCell):
+    args = cons_list_to_python_list(args_expr)
+    if len(args) == 0:
+        return 0
+    for arg in args:
+        if not isNumber(arg):
+            raise Exception("`Add` requires numeric inputs, but received: {}")
+    args = cast(list[int | float], args)
+    return reduce(lambda x, y: x + y, args)
 
 
-def exec_lt(expr: ConsCell) -> bool:
-    fst = car(expr)
-    snd = cadr(expr)
-    if not isNumber(fst):
-        raise Exception("Non numeric input for LT")
-    if not isNumber(snd):
-        raise Exception("Non numeric input for LT")
-    return fst < snd
+def exec_sub(args_expr: ConsCell):
+    args = cons_list_to_python_list(args_expr)
+    if len(args) == 0:
+        raise Exception("No args passed to `sub`")
+    for arg in args:
+        if not isNumber(arg):
+            raise Exception("`Sub` requires numeric inputs, but received: {}")
+    args = cast(list[int | float], args)
+
+    if len(args) == 1:
+        return -args[0]
+    return reduce(lambda x, y: x - y, args)
 
 
-def exec_gt(expr: ConsCell) -> bool:
-    fst = car(expr)
-    snd = cadr(expr)
-    if not isNumber(fst):
-        raise Exception("Non numeric input for LT")
-    if not isNumber(snd):
-        raise Exception("Non numeric input for LT")
-    return fst > snd
+def exec_mul(args_expr: ConsCell):
+    args = cons_list_to_python_list(args_expr)
+    if len(args) == 0:
+        return 1
+    for arg in args:
+        if not isNumber(arg):
+            raise Exception("`mul` requires numeric inputs, but received: {}")
+    args = cast(list[int | float], args)
+
+    return reduce(lambda x, y: x * y, args)
+
+
+def exec_div(args_expr: ConsCell):
+    args = cons_list_to_python_list(args_expr)
+
+    if len(args) == 0:
+        raise Exception("No arguments passed to `div`")
+    for arg in args:
+        if not isNumber(arg):
+            raise Exception("`mul` requires numeric inputs, but received: {}")
+    args = cast(list[int | float], args)
+
+    if len(args) == 1:
+        return 1 / args[0]
+    return reduce(lambda x, y: x / y, args)
+
+
+def exec_lt(args_expr: ConsCell | Null) -> bool:
+    def gt_reduce(values: list[float | int]):
+        if len(values) == 1:
+            return True
+        a = values[0]
+        b = values[1]
+        if a >= b:
+            return False
+        return gt_reduce(values[1:])
+
+    args = cons_list_to_python_list(args_expr)
+    for arg in args:
+        if not isNumber(arg):
+            raise Exception("`mul` requires numeric inputs, but received: {}")
+    args = cast(list[int | float], args)
+
+    return gt_reduce(args)
+
+
+def exec_gt(args_expr: ConsCell | Null) -> bool:
+    def gt_reduce(values: list[float | int]):
+        if len(values) == 1:
+            return True
+        a = values[0]
+        b = values[1]
+        if a <= b:
+            return False
+        return gt_reduce(values[1:])
+
+    args = cons_list_to_python_list(args_expr)
+    for arg in args:
+        if not isNumber(arg):
+            raise Exception("`mul` requires numeric inputs, but received: {}")
+    args = cast(list[int | float], args)
+    return gt_reduce(args)
 
 
 def exec_not(args: ConsCell | Null) -> bool:
     if isPair(args):
+        if not isNull(cdr(args)):
+            raise Exception("More than one arg provided to `not`")
+        if not isinstance(car(args), bool):
+            return False
         return not car(args)
     raise Exception("No arguments provided to `not`")
 
 
 def exec_cons(args: ConsCell | Null) -> ConsCell:
     if isPair(args):
-        if isNull(cdr(args)):
+        fst = car(args)
+        rest = cdr(args)
+        if isNull(rest):
             raise Exception("Only one argument provided to `cons`")
-        return cons(car(args), cadr(args))
+        if not isPair(rest):
+            raise Exception("malformed args to cons")
+        if not isNull(cdr(rest)):
+            raise Exception("More than 2 args passed to `cons`")
+        snd = car(rest)
+
+        return cons(fst, snd)
     raise Exception("No arguments provided to `cons`")
 
 
@@ -1111,6 +1277,8 @@ def exec_reverse(args: ConsCell | Null) -> ConsCell | Null:
 def exec_length(args: ConsCell | Null) -> int:
     if isPair(args):
         arg = car(args)
+        if not isNull(cdr(args)):
+            raise Exception("More than 1 argument passed to `length`")
         if isPair(arg) or isNull(arg):
             return length(arg)
         raise Exception("`length` only operates on proper lists!")
@@ -1126,18 +1294,21 @@ def _concat(list1: Expr, list2: Expr) -> Expr:
             raise Exception("!!!")
         return list1
     if not isPair(list1):
-        return (list1, list2)
+        raise Exception("First arg to concat must be a list")
     return (car(list1), _concat(cdr(list1), list2))
 
 
-def exec_append(expr: ConsCell) -> Expr:
+def exec_append(expr: ConsCell | Null) -> Expr:
+    if not isPair(expr):
+        return expr
     fst = car(expr)
-    snd = cdr(expr)
-    if isNull(snd):
+    rest = cdr(expr)
+    if isNull(rest):
         return fst
-    if not isPair(snd):
-        raise Exception("Second argument to `append` must be a pair")
-    return _concat(fst, exec_append(snd))
+    if isNull(fst):
+        return exec_append(rest)
+
+    return _concat(fst, exec_append(rest))
 
 
 def exec_apply(expr: Expr) -> Expr:
@@ -1145,7 +1316,11 @@ def exec_apply(expr: Expr) -> Expr:
         raise Exception("Apply requires a list of arguments")
 
     f = car(expr)
-    args = cadr(expr)
+    rest = cdr(expr)
+    args = car(rest)
+
+    if not isNull(cdr(rest)):
+        raise Exception("too many args provided to `apply`")
 
     if callable(f):
         # apply a builtin procedure
@@ -1196,29 +1371,36 @@ def standard_env():
         "<": exec_lt,
         ">": exec_gt,
         "not": exec_not,
-        # Equivalence Predicates
-        "=": exec_eq,
-        "eq?": exec_eq,
-        "length": exec_length,
-        "reverse": exec_reverse,
-        "cons": exec_cons,
-        "car": exec_car,
-        "cdr": exec_cdr,
-        "append": exec_append,
-        "list": lambda args: args,
+        # Type Predicates
         "pair?": exec_isPair,
         "null?": exec_isNull,
-        "atom?": exec_isAtom,
+        "atom?": exec_isAtom,  # todo: this should be removed
         "boolean?": exec_isBool,
         "number?": exec_isNumber,
         "string?": exec_isString,
         "symbol?": exec_isSymbol,
+        # Equivalence Predicates
+        "=": exec_numeric_eq,
+        "boolean=?": exec_bool_eq,
+        "symbol=?": exec_symbol_eq,
+        "string=?": exec_string_eq,
+        "eq?": exec_eq,
+        "eqv?": exec_eqv,
+        # List Procedures
+        "cons": exec_cons,
+        "car": exec_car,
+        "cdr": exec_cdr,
+        "list": lambda args: args,  # todo: I think this can be removed
+        "append": exec_append,
+        "length": exec_length,
+        "reverse": exec_reverse,  # needs a test
+        "apply": exec_apply,
+        # UNTESTED:
         "eval": lambda expr: trampoline(evaluate(expr, env, lambda x: x)),
         # InPort Procedures
         "open-input-file": lambda fname: InPort(open(fname, "r")),
         "read": lambda inport: read(inport),
         # OutPort Procedures
-        "apply": exec_apply,
         # todo: unimplemented
         # 'open-output-file': lambda fname: OutPort(open(fname, 'w')),
         # 'write': lambda obj, outport: lambda: outport.file.write(str(obj)),
