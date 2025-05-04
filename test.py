@@ -2,9 +2,14 @@ from interp import (
     InPort,
     Procedure,
     Symbol,
+    extract_bindings,
+    isNumber,
+    isPair,
+    match_type_contract,
     pformat,
     read,
     evaluate,
+    reverse,
     standard_env,
     trampoline,
 )
@@ -19,6 +24,95 @@ def i(s: str, env=None):
     x = InPort(StringIO(s))
     i = read(x)
     return trampoline(evaluate(i, env, lambda x: x)), env
+
+
+class TestContractMatcher(unittest.TestCase):
+    def test_x(self):
+        self.assertEqual(extract_bindings((Symbol("x"), ()), (1, ())), {"x": 1})
+        self.assertEqual(extract_bindings((Symbol("x"), ()), (3.14, ())), {"x": 3.14})
+        self.assertEqual(
+            extract_bindings((Symbol("x"), (Symbol("y"), ())), (1, (2, ()))),
+            {"x": 1, "y": 2},
+        )
+        self.assertEqual(
+            extract_bindings((Symbol("fst"), Symbol("rest")), (1, (2, (3, ())))),
+            {"fst": 1, "rest": (2, (3, ()))},
+        )
+
+    def test_type_contract(self):
+        self.assertTrue(match_type_contract((isNumber, ()), (1, ())))
+        self.assertTrue(
+            match_type_contract((lambda x: isinstance(x, str), ()), ("A", ()))
+        )
+        self.assertFalse(match_type_contract((isNumber, ()), ("A", ())))
+        self.assertFalse(match_type_contract((isNumber, ()), (1, (2, ()))))
+
+        self.assertTrue(match_type_contract((isNumber, (isNumber)), (1, (2, (3, ())))))
+        self.assertTrue(
+            match_type_contract(
+                (lambda x: isinstance(x, str), (isNumber)), ("A", (2, (3, ())))
+            )
+        )
+        self.assertFalse(
+            match_type_contract(
+                (lambda x: isinstance(x, str), (isNumber)), (1, (2, (3, ())))
+            )
+        )
+
+        self.assertTrue(
+            match_type_contract(
+                (lambda x: isinstance(x, str), (lambda x: isinstance(x, str))),
+                ("A", ()),
+            )
+        )
+        self.assertTrue(
+            match_type_contract(
+                (lambda x: isinstance(x, str), (lambda x: isinstance(x, str))),
+                ("A", ("B", ())),
+            )
+        )
+        self.assertTrue(
+            match_type_contract(
+                (lambda x: isinstance(x, str), (lambda x: isinstance(x, str))),
+                ("A", ("B", ("C", ()))),
+            )
+        )
+        self.assertTrue(
+            match_type_contract(
+                lambda x: isinstance(x, str),
+                ("A", ("B", ("C", ()))),
+            )
+        )
+        self.assertFalse(
+            match_type_contract(
+                lambda x: isinstance(x, str),
+                ("A", ("B", (Symbol("C"), ()))),
+            )
+        )
+
+        # # variadic args should still follow types
+        # self.assertTrue(
+        #     match_type_contract(
+        #         (lambda x: isinstance(x, str), isNumber),
+        #         # ("A", ("B", ("C", (3, ())))),
+        #         ("A", (3, (4, ("fail", ())))),
+        #     )
+        # )
+
+        # The last argument, if there is one, can be of any type.
+        # try to match (list ... any)
+        L1 = (1, (2, (3, ())))
+        L2 = (4, (5, (6, ())))
+        L3 = (7, (8, (9, ())))
+        i = (L1, (L2, (L3, (5, ()))))
+
+        self.assertTrue(
+            match_type_contract(
+                (isNumber, isPair),
+                # lists of lists followed by a single X
+                reverse(i),
+            )
+        )
 
 
 class TestStringMethods(unittest.TestCase):
@@ -85,6 +179,7 @@ class TestStringMethods(unittest.TestCase):
         self.assertEqual(i("(if (= 1 2) 1 2)")[0], 2)
 
     def test_begin(self):
+        self.assertEqual(i("(begin)")[0], ())
         self.assertEqual(i("(begin 1)")[0], 1)
         self.assertEqual(i("(begin 1 2 3)")[0], 3)
 
