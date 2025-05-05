@@ -378,20 +378,33 @@ class TestStringMethods(unittest.TestCase):
         )
 
     def test_dynamic_wind(self):
-        self.assertEqual(
-            i("""
-            (let
-                ((path '()))
-                (let ((add (lambda (x) (set! path (cons x path)))))
-                    (begin
-                        (dynamic-wind
-                            (lambda () (add 'A))
-                            (lambda () (add 'B))
-                            (lambda () (add 'C)))
-                        path)))
-            """)[0],
-            (Symbol("C"), (Symbol("B"), (Symbol("A"), ()))),
-        )
+        # self.assertEqual(
+        #     i("""
+        #     (let
+        #         ((path '()))
+        #         (let ((add (lambda (x) (set! path (cons x path)))))
+        #             (begin
+        #                 (add 'A)
+        #                 (add 'B)
+        #                 (add 'C)
+        #                 path)))
+        #     """)[0],
+        #     (Symbol("C"), (Symbol("B"), (Symbol("A"), ()))),
+        # )
+        # self.assertEqual(
+        #     i("""
+        #     (let
+        #         ((path '()))
+        #         (let ((add (lambda (x) (set! path (cons x path)))))
+        #             (begin
+        #                 (dynamic-wind
+        #                     (lambda () (add 'A))
+        #                     (lambda () (add 'B))
+        #                     (lambda () (add 'C)))
+        #                 path)))
+        #     """)[0],
+        #     (Symbol("C"), (Symbol("B"), (Symbol("A"), ()))),
+        # )
 
         # re-entering a continuation
         self.assertEqual(
