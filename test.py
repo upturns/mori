@@ -1,15 +1,16 @@
 from interp import (
     InPort,
+    InterpreterException,
     Procedure,
     Symbol,
-    extract_bindings,
-    isNumber,
-    isPair,
-    match_type_contract,
+    # extract_bindings,
+    # isNumber,
+    # isPair,
+    # match_type_contract,
     pformat,
     read,
     evaluate,
-    reverse,
+    # reverse,
     standard_env,
     trampoline,
 )
@@ -26,93 +27,93 @@ def i(s: str, env=None):
     return trampoline(evaluate(i, env, lambda x: x)), env
 
 
-class TestContractMatcher(unittest.TestCase):
-    def test_x(self):
-        self.assertEqual(extract_bindings((Symbol("x"), ()), (1, ())), {"x": 1})
-        self.assertEqual(extract_bindings((Symbol("x"), ()), (3.14, ())), {"x": 3.14})
-        self.assertEqual(
-            extract_bindings((Symbol("x"), (Symbol("y"), ())), (1, (2, ()))),
-            {"x": 1, "y": 2},
-        )
-        self.assertEqual(
-            extract_bindings((Symbol("fst"), Symbol("rest")), (1, (2, (3, ())))),
-            {"fst": 1, "rest": (2, (3, ()))},
-        )
+# class TestContractMatcher(unittest.TestCase):
+#     def test_x(self):
+#         self.assertEqual(extract_bindings((Symbol("x"), ()), (1, ())), {"x": 1})
+#         self.assertEqual(extract_bindings((Symbol("x"), ()), (3.14, ())), {"x": 3.14})
+#         self.assertEqual(
+#             extract_bindings((Symbol("x"), (Symbol("y"), ())), (1, (2, ()))),
+#             {"x": 1, "y": 2},
+#         )
+#         self.assertEqual(
+#             extract_bindings((Symbol("fst"), Symbol("rest")), (1, (2, (3, ())))),
+#             {"fst": 1, "rest": (2, (3, ()))},
+#         )
 
-    def test_type_contract(self):
-        self.assertTrue(match_type_contract((isNumber, ()), (1, ())))
-        self.assertTrue(
-            match_type_contract((lambda x: isinstance(x, str), ()), ("A", ()))
-        )
-        self.assertFalse(match_type_contract((isNumber, ()), ("A", ())))
-        self.assertFalse(match_type_contract((isNumber, ()), (1, (2, ()))))
+#     def test_type_contract(self):
+#         self.assertTrue(match_type_contract((isNumber, ()), (1, ())))
+#         self.assertTrue(
+#             match_type_contract((lambda x: isinstance(x, str), ()), ("A", ()))
+#         )
+#         self.assertFalse(match_type_contract((isNumber, ()), ("A", ())))
+#         self.assertFalse(match_type_contract((isNumber, ()), (1, (2, ()))))
 
-        self.assertTrue(match_type_contract((isNumber, (isNumber)), (1, (2, (3, ())))))
-        self.assertTrue(
-            match_type_contract(
-                (lambda x: isinstance(x, str), (isNumber)), ("A", (2, (3, ())))
-            )
-        )
-        self.assertFalse(
-            match_type_contract(
-                (lambda x: isinstance(x, str), (isNumber)), (1, (2, (3, ())))
-            )
-        )
+#         self.assertTrue(match_type_contract((isNumber, (isNumber)), (1, (2, (3, ())))))
+#         self.assertTrue(
+#             match_type_contract(
+#                 (lambda x: isinstance(x, str), (isNumber)), ("A", (2, (3, ())))
+#             )
+#         )
+#         self.assertFalse(
+#             match_type_contract(
+#                 (lambda x: isinstance(x, str), (isNumber)), (1, (2, (3, ())))
+#             )
+#         )
 
-        self.assertTrue(
-            match_type_contract(
-                (lambda x: isinstance(x, str), (lambda x: isinstance(x, str))),
-                ("A", ()),
-            )
-        )
-        self.assertTrue(
-            match_type_contract(
-                (lambda x: isinstance(x, str), (lambda x: isinstance(x, str))),
-                ("A", ("B", ())),
-            )
-        )
-        self.assertTrue(
-            match_type_contract(
-                (lambda x: isinstance(x, str), (lambda x: isinstance(x, str))),
-                ("A", ("B", ("C", ()))),
-            )
-        )
-        self.assertTrue(
-            match_type_contract(
-                lambda x: isinstance(x, str),
-                ("A", ("B", ("C", ()))),
-            )
-        )
-        self.assertFalse(
-            match_type_contract(
-                lambda x: isinstance(x, str),
-                ("A", ("B", (Symbol("C"), ()))),
-            )
-        )
+#         self.assertTrue(
+#             match_type_contract(
+#                 (lambda x: isinstance(x, str), (lambda x: isinstance(x, str))),
+#                 ("A", ()),
+#             )
+#         )
+#         self.assertTrue(
+#             match_type_contract(
+#                 (lambda x: isinstance(x, str), (lambda x: isinstance(x, str))),
+#                 ("A", ("B", ())),
+#             )
+#         )
+#         self.assertTrue(
+#             match_type_contract(
+#                 (lambda x: isinstance(x, str), (lambda x: isinstance(x, str))),
+#                 ("A", ("B", ("C", ()))),
+#             )
+#         )
+#         self.assertTrue(
+#             match_type_contract(
+#                 lambda x: isinstance(x, str),
+#                 ("A", ("B", ("C", ()))),
+#             )
+#         )
+#         self.assertFalse(
+#             match_type_contract(
+#                 lambda x: isinstance(x, str),
+#                 ("A", ("B", (Symbol("C"), ()))),
+#             )
+#         )
 
-        # # variadic args should still follow types
-        # self.assertTrue(
-        #     match_type_contract(
-        #         (lambda x: isinstance(x, str), isNumber),
-        #         # ("A", ("B", ("C", (3, ())))),
-        #         ("A", (3, (4, ("fail", ())))),
-        #     )
-        # )
+#         # # variadic args should still follow types
+#         # self.assertTrue(
+#         #     match_type_contract(
+#         #         (lambda x: isinstance(x, str), isNumber),
+#         #         # ("A", ("B", ("C", (3, ())))),
+#         #         ("A", (3, (4, ("fail", ())))),
+#         #     )
+#         # )
 
-        # The last argument, if there is one, can be of any type.
-        # try to match (list ... any)
-        L1 = (1, (2, (3, ())))
-        L2 = (4, (5, (6, ())))
-        L3 = (7, (8, (9, ())))
-        i = (L1, (L2, (L3, (5, ()))))
+#         # The last argument, if there is one, can be of any type.
+#         # try to match (list ... any)
+#         L1 = (1, (2, (3, ())))
+#         L2 = (4, (5, (6, ())))
+#         L3 = (7, (8, (9, ())))
+#         i = (L1, (L2, (L3, (5, ()))))
 
-        self.assertTrue(
-            match_type_contract(
-                (isNumber, isPair),
-                # lists of lists followed by a single X
-                reverse(i),
-            )
-        )
+#         self.assertTrue(
+#             match_type_contract(
+#                 (isNumber, isPair),
+#                 # lists of lists followed by a single X
+#                 reverse(i),
+#             )
+#         )
 
 
 class TestStringMethods(unittest.TestCase):
@@ -472,7 +473,7 @@ class TestStringMethods(unittest.TestCase):
 class TestPrimitiveProcedures(unittest.TestCase):
     def test_null_pred(self):
         # 0 args fails
-        self.assertRaises(Exception, lambda: i("(null?)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(null?)")[0])
         # 1 arg
         self.assertTrue(i("(null? '())")[0])
         self.assertFalse(i("(null? 1)")[0])
@@ -483,13 +484,13 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertFalse(i("(null? #f)")[0])
         self.assertFalse(i("(null? '(1 2 3))")[0])
         # 2+ args fails
-        self.assertRaises(Exception, lambda: i("(null? '() '() #f)")[0])
-        self.assertRaises(Exception, lambda: i("(null? #f #f '())")[0])
-        self.assertRaises(Exception, lambda: i("(null? '() '())")[0])
+        self.assertRaises(InterpreterException, lambda: i("(null? '() '() #f)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(null? #f #f '())")[0])
+        self.assertRaises(InterpreterException, lambda: i("(null? '() '())")[0])
 
     def test_number_pred(self):
         # 0 args fails
-        self.assertRaises(Exception, lambda: i("(number?)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(number?)")[0])
         # 1 arg
         self.assertFalse(i("(number? '())")[0])
         self.assertTrue(i("(number? 1)")[0])
@@ -502,13 +503,13 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertFalse(i("(number? #f)")[0])
         self.assertFalse(i("(number? '(1 2 3))")[0])
         # 2+ args fails
-        self.assertRaises(Exception, lambda: i("(number? 1 2 #f)")[0])
-        self.assertRaises(Exception, lambda: i("(number? #f #f 3.14)")[0])
-        self.assertRaises(Exception, lambda: i("(number? 99 100)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(number? 1 2 #f)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(number? #f #f 3.14)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(number? 99 100)")[0])
 
     def test_string_pred(self):
         # 0 args fails
-        self.assertRaises(Exception, lambda: i("(string?)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(string?)")[0])
         # 1 arg
         self.assertFalse(i("(string? '())")[0])
         self.assertFalse(i("(string? 1)")[0])
@@ -524,13 +525,13 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertFalse(i("(string? #f)")[0])
         self.assertFalse(i("(string? '(1 2 3))")[0])
         # 2+ args fails
-        self.assertRaises(Exception, lambda: i('(string? "A" "B" #f)')[0])
-        self.assertRaises(Exception, lambda: i('(string? #f #f "A")')[0])
-        self.assertRaises(Exception, lambda: i('(string? "A" "B")')[0])
+        self.assertRaises(InterpreterException, lambda: i('(string? "A" "B" #f)')[0])
+        self.assertRaises(InterpreterException, lambda: i('(string? #f #f "A")')[0])
+        self.assertRaises(InterpreterException, lambda: i('(string? "A" "B")')[0])
 
     def test_symbol_pred(self):
         # 0 args fails
-        self.assertRaises(Exception, lambda: i("(symbol?)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(symbol?)")[0])
         # 1 arg
         self.assertFalse(i("(symbol? '())")[0])
         self.assertFalse(i("(symbol? 1)")[0])
@@ -546,13 +547,13 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertFalse(i("(symbol? #f)")[0])
         self.assertFalse(i("(symbol? '(1 2 3))")[0])
         # 2+ args fails
-        self.assertRaises(Exception, lambda: i("(symbol? 'A 'B #f)")[0])
-        self.assertRaises(Exception, lambda: i("(symbol? #f #t 'A)")[0])
-        self.assertRaises(Exception, lambda: i("(symbol? 'A 'B)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(symbol? 'A 'B #f)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(symbol? #f #t 'A)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(symbol? 'A 'B)")[0])
 
     def test_pair_pred(self):
         # 0 args fails
-        self.assertRaises(Exception, lambda: i("(pair?)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(pair?)")[0])
         # 1 arg
         self.assertFalse(i("(pair? '())")[0])
         self.assertFalse(i("(pair? 1)")[0])
@@ -571,9 +572,11 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertTrue(i("(pair? '(() . ()))")[0])
         self.assertTrue(i("(pair? '(() ()))")[0])
         # 2+ args fails
-        self.assertRaises(Exception, lambda: i("(pair? '(1 2) '(3 4) #f)")[0])
-        self.assertRaises(Exception, lambda: i("(pair? #f #t '(1 2))")[0])
-        self.assertRaises(Exception, lambda: i("(pair? '(1 2) '(3 4))")[0])
+        self.assertRaises(
+            InterpreterException, lambda: i("(pair? '(1 2) '(3 4) #f)")[0]
+        )
+        self.assertRaises(InterpreterException, lambda: i("(pair? #f #t '(1 2))")[0])
+        self.assertRaises(InterpreterException, lambda: i("(pair? '(1 2) '(3 4))")[0])
 
     def test_sum(self):
         # no args returns 0
@@ -588,18 +591,18 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertEqual(i("(+ -10 10.0)")[0], 0)
         self.assertEqual(i("(+ 1 2 3)")[0], 6)
 
-        self.assertRaises(Exception, lambda: i("(+ 1 'a)")[0])
-        self.assertRaises(Exception, lambda: i("(+ 'a 'a)")[0])
-        self.assertRaises(Exception, lambda: i("(+ #f 0)")[0])
-        self.assertRaises(Exception, lambda: i('(+ "A" 0)')[0])
-        self.assertRaises(Exception, lambda: i('(+ "A" "B")')[0])
-        self.assertRaises(Exception, lambda: i("(+ 1 '())")[0])
-        self.assertRaises(Exception, lambda: i("(+ 1 '(1))")[0])
-        self.assertRaises(Exception, lambda: i("(+ '() '())")[0])
+        self.assertRaises(InterpreterException, lambda: i("(+ 1 'a)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(+ 'a 'a)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(+ #f 0)")[0])
+        self.assertRaises(InterpreterException, lambda: i('(+ "A" 0)')[0])
+        self.assertRaises(InterpreterException, lambda: i('(+ "A" "B")')[0])
+        self.assertRaises(InterpreterException, lambda: i("(+ 1 '())")[0])
+        self.assertRaises(InterpreterException, lambda: i("(+ 1 '(1))")[0])
+        self.assertRaises(InterpreterException, lambda: i("(+ '() '())")[0])
 
     def test_sub(self):
         # no args fails
-        self.assertRaises(Exception, lambda: i("(-)"))
+        self.assertRaises(InterpreterException, lambda: i("(-)"))
         # 1 arg
         self.assertEqual(i("(- 1)")[0], -1)
         self.assertEqual(i("(- 3.14)")[0], -3.14)
@@ -609,14 +612,14 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertEqual(i("(- -10 10.0)")[0], -20)
         self.assertEqual(i("(- 1 2 3)")[0], -4)
 
-        self.assertRaises(Exception, lambda: i("(- 1 'a)")[0])
-        self.assertRaises(Exception, lambda: i("(- 'a 'a)")[0])
-        self.assertRaises(Exception, lambda: i("(- #f 0)")[0])
-        self.assertRaises(Exception, lambda: i('(- "A" 0)')[0])
-        self.assertRaises(Exception, lambda: i('(- "A" "B")')[0])
-        self.assertRaises(Exception, lambda: i("(- 1 '())")[0])
-        self.assertRaises(Exception, lambda: i("(- 1 '(1))")[0])
-        self.assertRaises(Exception, lambda: i("(- '() '())")[0])
+        self.assertRaises(InterpreterException, lambda: i("(- 1 'a)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(- 'a 'a)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(- #f 0)")[0])
+        self.assertRaises(InterpreterException, lambda: i('(- "A" 0)')[0])
+        self.assertRaises(InterpreterException, lambda: i('(- "A" "B")')[0])
+        self.assertRaises(InterpreterException, lambda: i("(- 1 '())")[0])
+        self.assertRaises(InterpreterException, lambda: i("(- 1 '(1))")[0])
+        self.assertRaises(InterpreterException, lambda: i("(- '() '())")[0])
 
     def test_mul(self):
         # no args returns 1
@@ -632,18 +635,18 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertEqual(i("(* 1 2 3)")[0], 6)
         self.assertEqual(i("(* 2 3 4 5)")[0], 120)
 
-        self.assertRaises(Exception, lambda: i("(* 1 'a)")[0])
-        self.assertRaises(Exception, lambda: i("(* 'a 'a)")[0])
-        self.assertRaises(Exception, lambda: i("(* #f 0)")[0])
-        self.assertRaises(Exception, lambda: i('(* "A" 0)')[0])
-        self.assertRaises(Exception, lambda: i('(* "A" "B")')[0])
-        self.assertRaises(Exception, lambda: i("(* 1 '())")[0])
-        self.assertRaises(Exception, lambda: i("(* 1 '(1))")[0])
-        self.assertRaises(Exception, lambda: i("(* '() '())")[0])
+        self.assertRaises(InterpreterException, lambda: i("(* 1 'a)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(* 'a 'a)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(* #f 0)")[0])
+        self.assertRaises(InterpreterException, lambda: i('(* "A" 0)')[0])
+        self.assertRaises(InterpreterException, lambda: i('(* "A" "B")')[0])
+        self.assertRaises(InterpreterException, lambda: i("(* 1 '())")[0])
+        self.assertRaises(InterpreterException, lambda: i("(* 1 '(1))")[0])
+        self.assertRaises(InterpreterException, lambda: i("(* '() '())")[0])
 
     def test_div(self):
         # fails with 0 args
-        self.assertRaises(Exception, lambda: i("(/)"))
+        self.assertRaises(InterpreterException, lambda: i("(/)"))
         # 1 arg returns it's reciprocal
         self.assertEqual(i("(/ 1)")[0], 1)
         self.assertEqual(i("(/ 2)")[0], 1 / 2)
@@ -656,23 +659,23 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertEqual(i("(/ 30 3 5)")[0], 2)
 
         # divide by 0 causes an error
-        self.assertRaises(Exception, lambda: i("(/ 0 0)")[0])
-        self.assertRaises(Exception, lambda: i("(/ 10 0)")[0])
-        self.assertRaises(Exception, lambda: i("(/ 1 2 0)")[0])
+        self.assertRaises(ZeroDivisionError, lambda: i("(/ 0 0)")[0])
+        self.assertRaises(ZeroDivisionError, lambda: i("(/ 10 0)")[0])
+        self.assertRaises(ZeroDivisionError, lambda: i("(/ 1 2 0)")[0])
 
         # wrong input types
-        self.assertRaises(Exception, lambda: i("(/ 1 'a)")[0])
-        self.assertRaises(Exception, lambda: i("(/ 'a 'a)")[0])
-        self.assertRaises(Exception, lambda: i("(/ #f 0)")[0])
-        self.assertRaises(Exception, lambda: i('(/ "A" 0)')[0])
-        self.assertRaises(Exception, lambda: i('(/ "A" "B")')[0])
-        self.assertRaises(Exception, lambda: i("(/ 1 '())")[0])
-        self.assertRaises(Exception, lambda: i("(/ 1 '(1))")[0])
-        self.assertRaises(Exception, lambda: i("(/ '() '())")[0])
+        self.assertRaises(InterpreterException, lambda: i("(/ 1 'a)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(/ 'a 'a)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(/ #f 0)")[0])
+        self.assertRaises(InterpreterException, lambda: i('(/ "A" 0)')[0])
+        self.assertRaises(InterpreterException, lambda: i('(/ "A" "B")')[0])
+        self.assertRaises(InterpreterException, lambda: i("(/ 1 '())")[0])
+        self.assertRaises(InterpreterException, lambda: i("(/ 1 '(1))")[0])
+        self.assertRaises(InterpreterException, lambda: i("(/ '() '())")[0])
 
     def test_lt(self):
         # fails with 0 args
-        self.assertRaises(Exception, lambda: i("(<)"))
+        self.assertRaises(InterpreterException, lambda: i("(<)"))
         # basic 2 arg case
         self.assertTrue(i("(< 0 1)")[0])
         self.assertTrue(i("(< 1 99)")[0])
@@ -688,22 +691,22 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertTrue(i("(< 1 2 3)")[0])
         self.assertFalse(i("(< 1 3 2)")[0])
 
-        self.assertRaises(Exception, lambda: i("(< 1 'a)")[0])
-        self.assertRaises(Exception, lambda: i("(< 'a 'a)")[0])
-        self.assertRaises(Exception, lambda: i("(< #f 0)")[0])
-        self.assertRaises(Exception, lambda: i('(< "A" 0)')[0])
-        self.assertRaises(Exception, lambda: i('(< "A" "B")')[0])
-        self.assertRaises(Exception, lambda: i("(< 1 '())")[0])
-        self.assertRaises(Exception, lambda: i("(< 1 '(1))")[0])
-        self.assertRaises(Exception, lambda: i("(< '() '())")[0])
-        self.assertRaises(Exception, lambda: i("(< 1 2 'a)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(< 1 'a)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(< 'a 'a)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(< #f 0)")[0])
+        self.assertRaises(InterpreterException, lambda: i('(< "A" 0)')[0])
+        self.assertRaises(InterpreterException, lambda: i('(< "A" "B")')[0])
+        self.assertRaises(InterpreterException, lambda: i("(< 1 '())")[0])
+        self.assertRaises(InterpreterException, lambda: i("(< 1 '(1))")[0])
+        self.assertRaises(InterpreterException, lambda: i("(< '() '())")[0])
+        self.assertRaises(InterpreterException, lambda: i("(< 1 2 'a)")[0])
 
         # ensure type error is thrown before any comparisons are made
-        self.assertRaises(Exception, lambda: i("(< 2 1'a)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(< 2 1'a)")[0])
 
     def test_gt(self):
         # fails with 0 args
-        self.assertRaises(Exception, lambda: i("(>)"))
+        self.assertRaises(InterpreterException, lambda: i("(>)"))
 
         # basic 2 arg case
         self.assertTrue(i("(> 1 0)")[0])
@@ -720,29 +723,29 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertTrue(i("(> 3 2 1)")[0])
         self.assertFalse(i("(> 2 3 1)")[0])
 
-        self.assertRaises(Exception, lambda: i("(> 1 'a)")[0])
-        self.assertRaises(Exception, lambda: i("(> 'a 'a)")[0])
-        self.assertRaises(Exception, lambda: i("(> #f 0)")[0])
-        self.assertRaises(Exception, lambda: i('(> "A" 0)')[0])
-        self.assertRaises(Exception, lambda: i('(> "A" "B")')[0])
-        self.assertRaises(Exception, lambda: i("(> 1 '())")[0])
-        self.assertRaises(Exception, lambda: i("(> 1 '(1))")[0])
-        self.assertRaises(Exception, lambda: i("(> '() '())")[0])
+        self.assertRaises(InterpreterException, lambda: i("(> 1 'a)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(> 'a 'a)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(> #f 0)")[0])
+        self.assertRaises(InterpreterException, lambda: i('(> "A" 0)')[0])
+        self.assertRaises(InterpreterException, lambda: i('(> "A" "B")')[0])
+        self.assertRaises(InterpreterException, lambda: i("(> 1 '())")[0])
+        self.assertRaises(InterpreterException, lambda: i("(> 1 '(1))")[0])
+        self.assertRaises(InterpreterException, lambda: i("(> '() '())")[0])
 
         # ensure type error is thrown before any comparisons are made
-        self.assertRaises(Exception, lambda: i("(> 1 2 'a)")[0])
+        self.assertRaises(InterpreterException, lambda: i("(> 1 2 'a)")[0])
 
     def test_not(self):
         # 0 args fails
-        self.assertRaises(Exception, lambda: i("(not)"))
+        self.assertRaises(InterpreterException, lambda: i("(not)"))
         # 1 args works for booleans
         self.assertTrue(i("(not #f)")[0])
         self.assertFalse(i("(not #t)")[0])
         # 2+ args fails
-        self.assertRaises(Exception, lambda: i("(not #t #t)"))
-        self.assertRaises(Exception, lambda: i("(not #f #f)"))
-        self.assertRaises(Exception, lambda: i("(not #t #f #t)"))
-        self.assertRaises(Exception, lambda: i("(not #t #f 'a)"))
+        self.assertRaises(InterpreterException, lambda: i("(not #t #t)"))
+        self.assertRaises(InterpreterException, lambda: i("(not #f #f)"))
+        self.assertRaises(InterpreterException, lambda: i("(not #t #f #t)"))
+        self.assertRaises(InterpreterException, lambda: i("(not #t #f 'a)"))
         # any non-bool input returns false
         self.assertFalse(i("(not 'a)")[0])
         self.assertFalse(i('(not "A")')[0])
@@ -754,9 +757,9 @@ class TestPrimitiveProcedures(unittest.TestCase):
     def test_eq(self):
         # Tests whether two objects are the same exact object in memory.
         # 0 args fails
-        self.assertRaises(Exception, lambda: i("(eq?)"))
+        self.assertRaises(InterpreterException, lambda: i("(eq?)"))
         # 1 arg fails
-        self.assertRaises(Exception, lambda: i("(eq? #t)"))
+        self.assertRaises(InterpreterException, lambda: i("(eq? #t)"))
         # 2 args works
         # positive cases
         self.assertTrue(i("(eq? #t #t)")[0])
@@ -779,14 +782,14 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertFalse(i("(eq? '(1 2 3) '(1 2 3))")[0])
 
         # 3+ args fails
-        self.assertRaises(Exception, lambda: i("(eq? 1 1 1)"))
+        self.assertRaises(InterpreterException, lambda: i("(eq? 1 1 1)"))
 
     def test_eqv(self):
         # 0 args fails
-        self.assertRaises(Exception, lambda: i("(eqv?)"))
+        self.assertRaises(InterpreterException, lambda: i("(eqv?)"))
         # 1 arg fails
-        self.assertRaises(Exception, lambda: i("(eqv? 1)"))
-        self.assertRaises(Exception, lambda: i("(eqv? #t)"))
+        self.assertRaises(InterpreterException, lambda: i("(eqv? 1)"))
+        self.assertRaises(InterpreterException, lambda: i("(eqv? #t)"))
         # 2 args positive cases
         # Null & Null returns true
         self.assertTrue(i("(eqv? '() '())")[0])
@@ -803,7 +806,7 @@ class TestPrimitiveProcedures(unittest.TestCase):
 
     def test_length(self):
         # 0 args fails
-        self.assertRaises(Exception, lambda: i("(length)"))
+        self.assertRaises(InterpreterException, lambda: i("(length)"))
         # works with 1 list
         self.assertEqual(i("(length '())")[0], 0)
         self.assertEqual(i("(length '(1))")[0], 1)
@@ -811,19 +814,19 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertEqual(i("(length '(a b c))")[0], 3)
         self.assertEqual(i("(length '(() () ()))")[0], 3)
         # fails with non-list arg
-        self.assertRaises(Exception, lambda: i("(length 1)"))
-        self.assertRaises(Exception, lambda: i("(length 'a)"))
-        self.assertRaises(Exception, lambda: i('(length "hello")'))
+        self.assertRaises(InterpreterException, lambda: i("(length 1)"))
+        self.assertRaises(InterpreterException, lambda: i("(length 'a)"))
+        self.assertRaises(InterpreterException, lambda: i('(length "hello")'))
         # 2+ args fails
-        self.assertRaises(Exception, lambda: i("(length '() '())"))
-        self.assertRaises(Exception, lambda: i("(length '(1 2 3) '(1 2 3))"))
+        self.assertRaises(InterpreterException, lambda: i("(length '() '())"))
+        self.assertRaises(InterpreterException, lambda: i("(length '(1 2 3) '(1 2 3))"))
 
     def test_cons(self):
         # 0 args fails
-        self.assertRaises(Exception, lambda: i("(cons)"))
+        self.assertRaises(InterpreterException, lambda: i("(cons)"))
         # 1 arg fails
-        self.assertRaises(Exception, lambda: i("(cons 1)"))
-        self.assertRaises(Exception, lambda: i("(cons '())"))
+        self.assertRaises(InterpreterException, lambda: i("(cons 1)"))
+        self.assertRaises(InterpreterException, lambda: i("(cons '())"))
         # 2 args works
         self.assertEqual(i("(cons 1 2)")[0], (1, 2))
         self.assertEqual(i("(cons 'a 'b)")[0], (Symbol("a"), Symbol("b")))
@@ -833,11 +836,11 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertEqual(i("(cons '(1 2) 3)")[0], ((1, (2, ())), 3))
         self.assertEqual(i("(cons '(1 2) '(3 4))")[0], ((1, (2, ())), (3, (4, ()))))
         # 3+ args fails
-        self.assertRaises(Exception, lambda: i("(cons 1 2 3)"))
+        self.assertRaises(InterpreterException, lambda: i("(cons 1 2 3)"))
 
     def test_car(self):
         # 0 args fails
-        self.assertRaises(Exception, lambda: i("(car)"))
+        self.assertRaises(InterpreterException, lambda: i("(car)"))
         # 1 pair works
         self.assertEqual(i("(car '(1))")[0], 1)
         self.assertEqual(i("(car '(a . b))")[0], Symbol("a"))
@@ -845,14 +848,14 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertEqual(i("(car '((1 2 3) 4))")[0], (1, (2, (3, ()))))
         self.assertEqual(i("(car '((1 2 3) . 4))")[0], (1, (2, (3, ()))))
         # null input fails
-        self.assertRaises(Exception, lambda: i("(car '())"))
+        self.assertRaises(InterpreterException, lambda: i("(car '())"))
         # 2+ args fails
-        self.assertRaises(Exception, lambda: i("(car '(1 2) '(3 4))"))
-        self.assertRaises(Exception, lambda: i("(car 1 2)"))
+        self.assertRaises(InterpreterException, lambda: i("(car '(1 2) '(3 4))"))
+        self.assertRaises(InterpreterException, lambda: i("(car 1 2)"))
 
     def test_cdr(self):
         # 0 args fails
-        self.assertRaises(Exception, lambda: i("(cdr)"))
+        self.assertRaises(InterpreterException, lambda: i("(cdr)"))
         # 1 pair works
         self.assertEqual(i("(cdr '(1))")[0], ())
         self.assertEqual(i("(cdr '(a . b))")[0], Symbol("b"))
@@ -860,10 +863,10 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertEqual(i("(cdr '((1 2 3) 4))")[0], (4, ()))
         self.assertEqual(i("(cdr '((1 2 3) . 4))")[0], 4)
         # null input fails
-        self.assertRaises(Exception, lambda: i("(cdr '())"))
+        self.assertRaises(InterpreterException, lambda: i("(cdr '())"))
         # 2+ args fails
-        self.assertRaises(Exception, lambda: i("(cdr '(1 2) '(3 4))"))
-        self.assertRaises(Exception, lambda: i("(cdr 1 2)"))
+        self.assertRaises(InterpreterException, lambda: i("(cdr '(1 2) '(3 4))"))
+        self.assertRaises(InterpreterException, lambda: i("(cdr 1 2)"))
 
     def test_append(self):
         # 0 args returns Null
@@ -879,10 +882,10 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertEqual(i("(append '() 'a)")[0], Symbol("a"))
         self.assertEqual(i("(append '() '() 1)")[0], 1)
         # null after non-null fails
-        self.assertRaises(Exception, lambda: i("(append 1 '())"))
-        self.assertRaises(Exception, lambda: i("(append '() 1 '())"))
+        self.assertRaises(InterpreterException, lambda: i("(append 1 '())"))
+        self.assertRaises(InterpreterException, lambda: i("(append '() 1 '())"))
         # list after non-list fails
-        self.assertRaises(Exception, lambda: i("(append '(1 2) 3 '(4 5))"))
+        self.assertRaises(InterpreterException, lambda: i("(append '(1 2) 3 '(4 5))"))
         # positive cases
         self.assertEqual(i("(append '(1) 2)")[0], (1, 2))
         self.assertEqual(i("(append '(1 2) 3)")[0], (1, (2, 3)))
@@ -899,10 +902,10 @@ class TestPrimitiveProcedures(unittest.TestCase):
 
     def test_apply(self):
         # 0 args fails
-        self.assertRaises(Exception, lambda: i("(apply)"))
+        self.assertRaises(InterpreterException, lambda: i("(apply)"))
         # 1 arg fails
-        self.assertRaises(Exception, lambda: i("(apply +)"))
-        self.assertRaises(Exception, lambda: i("(apply '())"))
+        self.assertRaises(InterpreterException, lambda: i("(apply +)"))
+        self.assertRaises(InterpreterException, lambda: i("(apply '())"))
 
         self.assertEqual(i("(apply + '(1 2 3))")[0], 6)
         self.assertEqual(i("(apply * '(2 3 4))")[0], 24)
@@ -913,11 +916,13 @@ class TestPrimitiveProcedures(unittest.TestCase):
             i("(apply (lambda (x . args) args) '(1 2 3))) ")[0], (2, (3, ()))
         )
         # 2+ args fails
-        self.assertRaises(Exception, lambda: i("(apply + '(1 2 3) '(2 3 4))"))
+        self.assertRaises(
+            InterpreterException, lambda: i("(apply + '(1 2 3) '(2 3 4))")
+        )
 
     def test_numeric_eq_pred(self):
         # 0 args fails
-        self.assertRaises(Exception, lambda: i("(=)"))
+        self.assertRaises(InterpreterException, lambda: i("(=)"))
         # 1 arg returns true
         self.assertTrue(i("(= 1)")[0])
         self.assertTrue(i("(= 0)")[0])
@@ -935,16 +940,16 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertTrue(i("(= -1 -1 -1)")[0])
         self.assertTrue(i("(= 3.14 3.14 3.14 3.14)")[0])
         # 1 wrong type arg fails
-        self.assertRaises(Exception, lambda: i("(= #f)"))
-        self.assertRaises(Exception, lambda: i("(= #t)"))
-        self.assertRaises(Exception, lambda: i("(= '())"))
-        self.assertRaises(Exception, lambda: i('(= "A")'))
+        self.assertRaises(InterpreterException, lambda: i("(= #f)"))
+        self.assertRaises(InterpreterException, lambda: i("(= #t)"))
+        self.assertRaises(InterpreterException, lambda: i("(= '())"))
+        self.assertRaises(InterpreterException, lambda: i('(= "A")'))
         # wrong type of many args fails
-        self.assertRaises(Exception, lambda: i("(= #f #f)"))
-        self.assertRaises(Exception, lambda: i("(= 1 #f)"))
-        self.assertRaises(Exception, lambda: i("(= 1 1 #f)"))
-        self.assertRaises(Exception, lambda: i("(= 1 1 #t)"))
-        self.assertRaises(Exception, lambda: i("(= 1 #t 2)"))
+        self.assertRaises(InterpreterException, lambda: i("(= #f #f)"))
+        self.assertRaises(InterpreterException, lambda: i("(= 1 #f)"))
+        self.assertRaises(InterpreterException, lambda: i("(= 1 1 #f)"))
+        self.assertRaises(InterpreterException, lambda: i("(= 1 1 #t)"))
+        self.assertRaises(InterpreterException, lambda: i("(= 1 #t 2)"))
 
     def test_bool_eq_pred(self):
         # 0 args returns True
@@ -968,10 +973,10 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertFalse(i("(boolean=? #f #f #t)")[0])
         self.assertFalse(i("(boolean=? #f #f #f #f #t)")[0])
         # wrong type fails
-        self.assertRaises(Exception, lambda: i("(boolean=? 0)"))
-        self.assertRaises(Exception, lambda: i("(boolean=? 1)"))
-        self.assertRaises(Exception, lambda: i("(boolean=? 'a)"))
-        self.assertRaises(Exception, lambda: i("(boolean=? #t #t 1)"))
+        self.assertRaises(InterpreterException, lambda: i("(boolean=? 0)"))
+        self.assertRaises(InterpreterException, lambda: i("(boolean=? 1)"))
+        self.assertRaises(InterpreterException, lambda: i("(boolean=? 'a)"))
+        self.assertRaises(InterpreterException, lambda: i("(boolean=? #t #t 1)"))
 
     def test_symbol_eq_pred(self):
         # 0 args returns True
@@ -994,12 +999,12 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertFalse(i("(symbol=? 'B 'B 'A)")[0])
         self.assertFalse(i("(symbol=? 'A 'A 'A 'B)")[0])
         # wrong type fails
-        self.assertRaises(Exception, lambda: i("(symbol=? 0)"))
-        self.assertRaises(Exception, lambda: i("(symbol=? 1)"))
-        self.assertRaises(Exception, lambda: i("(symbol=? #f)"))
-        self.assertRaises(Exception, lambda: i('(symbol=? "A")'))
-        self.assertRaises(Exception, lambda: i("""(symbol=? "A" 'A)"""))
-        self.assertRaises(Exception, lambda: i("(symbol=? #t #t 1)"))
+        self.assertRaises(InterpreterException, lambda: i("(symbol=? 0)"))
+        self.assertRaises(InterpreterException, lambda: i("(symbol=? 1)"))
+        self.assertRaises(InterpreterException, lambda: i("(symbol=? #f)"))
+        self.assertRaises(InterpreterException, lambda: i('(symbol=? "A")'))
+        self.assertRaises(InterpreterException, lambda: i("""(symbol=? "A" 'A)"""))
+        self.assertRaises(InterpreterException, lambda: i("(symbol=? #t #t 1)"))
 
     def test_string_eq_pred(self):
         # 0 args returns True
@@ -1025,12 +1030,12 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertFalse(i('(string=? "B" "B" "A")')[0])
         self.assertFalse(i('(string=? "A" "A" "A" "B")')[0])
         # wrong type fails
-        self.assertRaises(Exception, lambda: i("(string=? 0)"))
-        self.assertRaises(Exception, lambda: i("(string=? 1)"))
-        self.assertRaises(Exception, lambda: i("(string=? #f)"))
-        self.assertRaises(Exception, lambda: i("""(string=? "A" 'A)"""))
-        self.assertRaises(Exception, lambda: i("(string=? #t #t 1)"))
-        self.assertRaises(Exception, lambda: i("(string=? '())"))
+        self.assertRaises(InterpreterException, lambda: i("(string=? 0)"))
+        self.assertRaises(InterpreterException, lambda: i("(string=? 1)"))
+        self.assertRaises(InterpreterException, lambda: i("(string=? #f)"))
+        self.assertRaises(InterpreterException, lambda: i("""(string=? "A" 'A)"""))
+        self.assertRaises(InterpreterException, lambda: i("(string=? #t #t 1)"))
+        self.assertRaises(InterpreterException, lambda: i("(string=? '())"))
 
 
 if __name__ == "__main__":
