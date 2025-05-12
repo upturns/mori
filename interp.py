@@ -25,6 +25,7 @@ Primitive Procedures:
 - Lists: cons, car, cdr, length, reverse, list, append
 - Types: pair?, null?, atom?, boolean?, number?, string?, symbol?
 - I/O: open-input-file, read, display, pretty-print, newline
+- Exceptions: raise, raise-continuable, with-exception-handler
 - Misc: eval, call/cc, dynamic-wind
 
 """
@@ -237,7 +238,7 @@ def shared_prefix_length(
     return i
 
 
-def trampoline(f: Thunk | Expr) -> Expr:
+def trampoline(f: Thunk[Expr] | Expr) -> Expr:
     while callable(f):
         exec_result = f()
         f = exec_result
