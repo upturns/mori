@@ -97,6 +97,9 @@ class Error:
     def __repr__(self) -> str:
         return f"#<Error: {self.msg}>"
 
+    def __eq__(self, other):
+        return isinstance(other, Error) and other.msg == self.msg
+
 
 class InterpreterException(Exception):
     pass
@@ -175,8 +178,8 @@ Atom = (
 )
 Expr = Atom | ConsCell | ProperList
 
-Thunk = Callable[[], "Thunk" | Expr]
-InterpCont = Callable[[Expr], Expr | Thunk]
+Thunk = Callable[[], "Thunk[P]" | P]
+InterpCont = Callable[[Expr], P | Thunk[P]]
 
 
 class Env:
@@ -312,7 +315,7 @@ def pformat(expr: Expr, indent: int = 0, max_width: int = 80) -> str:
 def pretty_print(expr: Expr, indent: int = 0, max_width: int = 80) -> None:
     """Pretty-print a Scheme expression with indentation and shorthand syntax."""
     formatted = pformat(expr, indent, max_width)
-    print(formatted, end="", flush=True)
+    print(formatted.encode("utf-8").decode("unicode_escape"), end="", flush=True)
 
 
 def cons(p: P, q: Q) -> ConsCell[P, Q]:
@@ -397,24 +400,24 @@ def isNumber(expr: Expr) -> TypeGuard[int | float]:
     )
 
 
-def match_type_contract(type_pattern: Expr, vals: Expr):
+def match_type_contract(type_pattern: Expr, vals: Expr) -> bool:
     if isNull(type_pattern):
         if not isNull(vals):
-            raise InterpreterException("Failed to match type contract")
+            return False
         return True
     if isNull(vals):
         if not isPair(type_pattern):
             return True
-        raise InterpreterException("Failed to match type contract")
+        return False
 
     if not isPair(type_pattern):
         type_pattern = cast(Callable[[Expr], bool], type_pattern)
         if isPair(vals):
             p = vals
-            while not isNull(p):
+            while isPair(p):
                 m = type_pattern(car(p))
                 if not m:
-                    raise InterpreterException("Failed to match type contract")
+                    return False
                 p = cdr(p)
             return True
         m = type_pattern(vals)
@@ -427,7 +430,7 @@ def match_type_contract(type_pattern: Expr, vals: Expr):
         raise Exception("Invalid function in type pattern:", fst)
 
     if not isPair(vals):
-        raise InterpreterException("Failed to match type contract")
+        return False
 
     fst_val = car(vals)
 
@@ -436,7 +439,7 @@ def match_type_contract(type_pattern: Expr, vals: Expr):
     vals_rest = cdr(vals)
     if m:
         return match_type_contract(rest, vals_rest)
-    raise InterpreterException("Failed to match type contract")
+    return False
 
 
 def extract_bindings(
@@ -565,49 +568,69 @@ def atom(token) -> Expr:
 #                SPECIAL FORM EVALUATORS                  #
 ###########################################################
 
+# todo: this is a placeholder implemetation
+type FailCont = Callable[[Expr, InterpCont], Thunk]
 
-def eval_define(arg_exprs: ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
+
+def eval_define(
+    arg_exprs: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+) -> Thunk:
     """
     (define <variable> <expression>)
     (define (<variable> <formals>) <body>)
     (define (<variable> . <formal>) <body>)
     """
-    if isNonNullProperList(arg_exprs):
+    match_form1 = match_type_contract(
+        (lambda fst: isinstance(fst, Symbol), (lambda _: True, ())), arg_exprs
+    )
+
+    if match_form1:
+        arg_exprs = cast(ConsCell[Symbol, ConsCell[Expr, Null]], arg_exprs)
         header = car(arg_exprs)
-        rest = cdr(arg_exprs)
-        if not isPair(rest):
-            raise Exception("Body is malformed in define")
-        body = car(rest)
-        logger.debug(f"Evaluating define. Header= {header}")
+        body = cdr(arg_exprs)
+        return lambda: eval_sequence(
+            body,
+            env,
+            lambda val: (
+                # USE TOP LEVEL
+                env.toplevel().bindings.update({header.name: val}),
+                lambda: cont(()),
+            )[1],
+            fk,
+        )
 
-        if isinstance(header, Symbol):
-            return lambda: evaluate(
-                body,
-                env,
-                lambda val: (
-                    # USE TOP LEVEL
-                    env.toplevel().bindings.update({header.name: val}),
-                    lambda: cont(()),
-                )[1],
-            )
+    # matches variadic or non-variadic lambda definitions
+    match_form2 = match_type_contract(
+        (
+            lambda x: match_type_contract(
+                (
+                    lambda x: isinstance(x, Symbol),
+                    lambda x: isinstance(x, Symbol),
+                ),
+                x,
+            ),
+            (lambda _: True, ()),
+        ),
+        arg_exprs,
+    )
 
-        if not isPair(header):
-            raise Exception("Malformed definition (1)!")
-
-        name = header[0]
-
-        if not isinstance(name, Symbol):
-            raise Exception("Malformed definition (2)!")
-
-        params = header[1]
+    if match_form2:
+        arg_exprs = cast(
+            ConsCell[ConsCell[Symbol, Expr], ConsCell[Expr, Null]], arg_exprs
+        )
+        header = car(arg_exprs)
+        body = cdr(arg_exprs)
+        name = car(header)
+        params = cdr(header)
         p = Procedure(params, body, env)
         env.toplevel().bindings[name.name] = p
-
         return lambda: cont(())
     raise Exception("No arguments passed to define")
 
 
-def eval_sequence(exprs: ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
+def eval_sequence(
+    exprs: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+) -> Thunk:
     """
     evaluates a sequence of expressions in order,
     discarding intermediate values and keeping the result of the last one
@@ -617,16 +640,21 @@ def eval_sequence(exprs: ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
         rest = cdr(exprs)
         if isNull(rest):
             # Last expression: evaluate with original continuation
-            return lambda: evaluate(first, env, cont)
+            return lambda: evaluate(first, env, cont, fk)
 
         # Otherwise: evaluate `first`, discard result, continue with rest
         return lambda: evaluate(
-            first, env, lambda _ignored_value: lambda: eval_sequence(rest, env, cont)
+            first,
+            env,
+            lambda _ignored_value: lambda: eval_sequence(rest, env, cont, fk),
+            fk,
         )
     return lambda: cont(())
 
 
-def eval_begin(exprs: ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
+def eval_begin(
+    exprs: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+) -> Thunk:
     """
     syntax: (begin <expression or definition> …)
 
@@ -636,10 +664,10 @@ def eval_begin(exprs: ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
     The <expression>s are evaluated sequentially from left to right,
     and the values of the last <expression> are returned.
     """
-    return eval_sequence(exprs, env, cont)
+    return eval_sequence(exprs, env, cont, fk)
 
 
-def eval_if(args: ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
+def eval_if(args: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont) -> Thunk:
     """
     syntax: (if <test> <consequent> <alternate>)
     syntax: (if <test> <consequent>)
@@ -647,7 +675,10 @@ def eval_if(args: ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
     Otherwise <alternate> is evaluated and its values are returned.
     """
 
-    match_type_contract((lambda _: True, (lambda _: True, (lambda _: True, ()))), args)
+    if not match_type_contract(
+        (lambda _: True, (lambda _: True, (lambda _: True, ()))), args
+    ):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
 
     args = cast(ConsCell[Expr, ConsCell[Expr, ConsCell[Expr, Null]]], args)
 
@@ -658,14 +689,17 @@ def eval_if(args: ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
     return lambda: evaluate(
         cond_expr,
         env,
-        lambda cond: (lambda: evaluate(conseq_expr, env, cont))
+        lambda cond: (lambda: evaluate(conseq_expr, env, cont, fk))
         if cond
-        else lambda: evaluate(alt_expr, env, cont),
+        else lambda: evaluate(alt_expr, env, cont, fk),
+        fk,
     )
 
 
 # cont should be a function that takes a list of exprs
-def eval_args(arg_exprs: ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
+def eval_args(
+    arg_exprs: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+) -> Thunk:
     if isNonNullProperList(arg_exprs):
         first, rest = arg_exprs
 
@@ -674,15 +708,18 @@ def eval_args(arg_exprs: ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
                 first,
                 env,
                 lambda val: eval_args(
-                    rest, env, lambda values: lambda: cont((val, values))
+                    rest, env, lambda values: lambda: cont((val, values)), fk
                 ),
+                fk,
             )
-        return lambda: evaluate(first, env, lambda val: lambda: cont((val, ())))
+        return lambda: evaluate(first, env, lambda val: lambda: cont((val, ())), fk)
 
     return lambda: cont(())
 
 
-def eval_let(arg_exprs: ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
+def eval_let(
+    arg_exprs: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+) -> Thunk:
     """
     Syntax: (let <bindings> <body>)
     Bindings has form: ((<var_1> <init_1>) ...) where each <init> is an expression
@@ -690,7 +727,8 @@ def eval_let(arg_exprs: ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
     """
     if isPair(arg_exprs):
         # # todo: this type contract
-        match_type_contract((lambda _: True, (lambda _: True, ())), arg_exprs)
+        if not match_type_contract((lambda _: True, (lambda _: True, ())), arg_exprs):
+            return fk(Error("Contract error"), on_error_cannot_be_handled)
 
         arg_exprs = cast(
             ConsCell[ProperList[Expr], ConsCell[Expr, Null]],
@@ -727,13 +765,15 @@ def eval_let(arg_exprs: ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
 
         def with_values(values):
             child_env = Env(binding_name_exprs, values, env)
-            return lambda: evaluate(body_expr, child_env, cont)
+            return lambda: evaluate(body_expr, child_env, cont, fk)
 
-        return eval_args(binding_value_exprs, env, with_values)
+        return eval_args(binding_value_exprs, env, with_values, fk)
     raise Exception("No arguments passed to `let`")
 
 
-def eval_letrec(arg_exprs: ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
+def eval_letrec(
+    arg_exprs: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+) -> Thunk:
     """
     Syntax: (letrec <bindings> <body>)
     Bindings has form: ((<var_1> <init_1>) ...) where each <init> is an expression
@@ -741,7 +781,8 @@ def eval_letrec(arg_exprs: ProperList[Expr], env: Env, cont: InterpCont) -> Thun
     """
 
     # todo: this type contract
-    match_type_contract((lambda _: True, (lambda _: True, ())), arg_exprs)
+    if not match_type_contract((lambda _: True, (lambda _: True, ())), arg_exprs):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
 
     arg_exprs = cast(
         ConsCell[ProperList[Expr], ConsCell[Expr, Null]],
@@ -783,48 +824,54 @@ def eval_letrec(arg_exprs: ProperList[Expr], env: Env, cont: InterpCont) -> Thun
 
     def with_values(values):
         child_env.bindings.update(dict(zip(names, cons_list_to_python_list(values))))
-        return lambda: evaluate(body_expr, child_env, cont)
+        return lambda: evaluate(body_expr, child_env, cont, fk)
 
-    return eval_args(binding_value_exprs, child_env, with_values)
+    return eval_args(binding_value_exprs, child_env, with_values, fk)
 
 
-def eval_lambda(arg_exprs: ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
+def eval_lambda(
+    arg_exprs: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+) -> Thunk:
     """
     Syntax: (lambda <formals> <body>)
     Formals: is a "formals argument lists"
     """
-    match_type_contract(
+    if not match_type_contract(
         (
             lambda x: isPair(x) or isNull(x) or isinstance(x, Symbol),
-            (lambda _: True, ()),
+            lambda _: True,
         ),
         arg_exprs,
-    )
+    ):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
 
     arg_exprs = cast(
         ConsCell[Symbol | ProperList[Expr] | Null, ConsCell[Expr, Null]], arg_exprs
     )
 
     param_exprs = car(arg_exprs)
-    body_expr = cadr(arg_exprs)
+    body_expr = cdr(arg_exprs)
 
     return lambda: cont(Procedure(param_exprs, body_expr, env))
 
 
-def eval_set(arg_exprs: ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
+def eval_set(
+    arg_exprs: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+) -> Thunk:
     """
     Syntax: (set! <variable> <expression>)
     """
-    match_type_contract(
+    if not match_type_contract(
         (lambda x: isinstance(x, Symbol), (lambda _: True, ())), arg_exprs
-    )
+    ):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
 
     arg_exprs = cast(ConsCell[Symbol, ConsCell[Expr, Null]], arg_exprs)
 
     sym_expr = car(arg_exprs)
     val_expr = cadr(arg_exprs)
     return lambda: evaluate(
-        val_expr, env, lambda val: lambda: cont(env.set(sym_expr, val))
+        val_expr, env, lambda val: lambda: cont(env.set(sym_expr, val)), fk
     )
 
 
@@ -833,6 +880,7 @@ def apply_continuation(
     args: ProperList[Expr],
     env: Env,
     from_stack: list[WindStackItem],
+    fk: FailCont,
 ) -> Thunk:
     to_stack = func.wind_stack[:]
     prefix = shared_prefix_length(from_stack, to_stack)
@@ -843,7 +891,7 @@ def apply_continuation(
         if i < prefix:
             return run_befores(prefix, k)
         _, after = from_stack[i]
-        return evaluate(after.body, env, lambda _: run_afters(i - 1, k))
+        return eval_sequence(after.body, env, lambda _: run_afters(i - 1, k), fk)
 
     def run_befores(i, k):
         if i >= len(to_stack):
@@ -851,7 +899,7 @@ def apply_continuation(
             dynamic_wind_stack[:] = to_stack
             return k()
         before, _ = to_stack[i]
-        return evaluate(before.body, env, lambda _: run_befores(i + 1, k))
+        return eval_sequence(before.body, env, lambda _: run_befores(i + 1, k), fk)
 
     # Entry point: start unwinding and rewinding, then apply the continuation
     if isNonNullProperList(args):
@@ -860,16 +908,18 @@ def apply_continuation(
     return run_afters(len(from_stack) - 1, lambda: func.f(args))
 
 
-def apply_procedure(proc: Procedure, args: Expr, cont: InterpCont) -> Thunk:
+def apply_procedure(
+    proc: Procedure, args: Expr, cont: InterpCont, fk: FailCont
+) -> Thunk:
     logger.debug(f"Applying defined procedure {proc} to {args}")
-    return lambda: evaluate(proc.body, Env(proc.parms, args, proc.env), cont)
+    return lambda: eval_sequence(proc.body, Env(proc.parms, args, proc.env), cont, fk)
 
 
 def apply_primitive_procedure(
-    builtin_func: Callable, args: Expr, env: Env, cont: InterpCont
+    builtin_func: Callable, args: Expr, env: Env, cont: InterpCont, fk: FailCont
 ) -> Thunk:
     logger.debug(f"Applying primitive procedure {builtin_func} to {args}")
-    return lambda: builtin_func(args, env, cont)
+    return lambda: builtin_func(args, env, cont, fk)
 
 
 def _expand_quasiquote(expr: Expr, env: Env, depth: int = 0) -> Expr:
@@ -879,7 +929,11 @@ def _expand_quasiquote(expr: Expr, env: Env, depth: int = 0) -> Expr:
                 unquote_args = cdr(expr)
                 if not isPair(unquote_args):
                     raise Exception("Invalid args to unquote")
-                return trampoline(evaluate(car(unquote_args), env, lambda x: x))
+                return trampoline(
+                    evaluate(
+                        car(unquote_args), env, lambda x: x, lambda x, _k: lambda: x
+                    )
+                )
             return (
                 Symbol("unquote"),
                 _expand_quasiquote(expr[1], env, depth - 1),
@@ -904,7 +958,14 @@ def _expand_quasiquote(expr: Expr, env: Env, depth: int = 0) -> Expr:
                     raise Exception("Invalid args to unquote")
                 return _append(
                     (
-                        trampoline(evaluate(car(unquote_args), env, lambda x: x)),
+                        trampoline(
+                            evaluate(
+                                car(unquote_args),
+                                env,
+                                lambda x: x,
+                                lambda x, _k: lambda: x,  # todo: didnt think about this
+                            )
+                        ),
                         (_expand_quasiquote(cdr(expr), env, depth), ()),
                     ),
                 )
@@ -917,7 +978,7 @@ def _expand_quasiquote(expr: Expr, env: Env, depth: int = 0) -> Expr:
         return expr
 
 
-def eval_quote(arg_exprs: ProperList[Expr], _env: Env, cont: InterpCont) -> Thunk:
+def eval_quote(arg_exprs: ProperList[Expr], _env: Env, cont: InterpCont, fk: FailCont):
     """
     Syntax: (quote <datum>)
     (quote <datum>) evaluates to <datum>
@@ -931,7 +992,9 @@ def eval_quote(arg_exprs: ProperList[Expr], _env: Env, cont: InterpCont) -> Thun
     return lambda: cont(car(arg_exprs))
 
 
-def eval_quasiquote(arg_exprs: ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
+def eval_quasiquote(
+    arg_exprs: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+):
     """
     Syntax: (quasiquote <qq template>)
     If no "unquote" appears within the <qq template>,
@@ -948,7 +1011,7 @@ def eval_quasiquote(arg_exprs: ProperList[Expr], env: Env, cont: InterpCont) -> 
     return lambda: cont(expanded)
 
 
-def evaluate(expr: Atom | ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
+def evaluate(expr: Atom | ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont):
     logger.debug(f"Evaluating: {expr}")
     if not isAtom(expr):
         expr = cast(ConsCell[Expr, ProperList[Expr]], expr)
@@ -957,32 +1020,33 @@ def evaluate(expr: Atom | ProperList[Expr], env: Env, cont: InterpCont) -> Thunk
 
         # (special forms)
         if fst == Symbol("define"):
-            return eval_define(rest, env, cont)
+            return eval_define(rest, env, cont, fk)
         if fst == Symbol("begin"):
-            return eval_begin(rest, env, cont)
+            return eval_begin(rest, env, cont, fk)
         if fst == Symbol("if"):
-            return eval_if(rest, env, cont)
+            return eval_if(rest, env, cont, fk)
         if fst == Symbol("let"):
-            return eval_let(rest, env, cont)
+            return eval_let(rest, env, cont, fk)
         if fst == Symbol("letrec"):
-            return eval_letrec(rest, env, cont)
+            return eval_letrec(rest, env, cont, fk)
         if fst == Symbol("lambda"):
-            return eval_lambda(rest, env, cont)
+            return eval_lambda(rest, env, cont, fk)
         if fst == Symbol("set!"):
-            return eval_set(rest, env, cont)
+            return eval_set(rest, env, cont, fk)
         if fst == Symbol("quote"):
-            return eval_quote(rest, env, cont)
+            return eval_quote(rest, env, cont, fk)
         if fst == Symbol("quasiquote"):
-            return eval_quasiquote(rest, env, cont)
+            return eval_quasiquote(rest, env, cont, fk)
 
         def helper(func):
             return lambda: eval_args(
                 rest,
                 env,
-                lambda args: exec_apply((func, (args, ())), env, cont),
+                lambda args: exec_apply((func, (args, ())), env, cont, fk),
+                fk,
             )
 
-        return evaluate(fst, env, helper)
+        return evaluate(fst, env, helper, fk)
 
     elif isinstance(expr, Symbol):
         res = env.find(expr)
@@ -1012,76 +1076,91 @@ def evaluate(expr: Atom | ProperList[Expr], env: Env, cont: InterpCont) -> Thunk
 ###########################################################
 
 
-def exec_isPair(args_expr: ProperList[Expr], env: Env, cont) -> bool:
+def exec_isPair(args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont):
     """
     Procedure: (pair? obj)
     Returns #t if obj is a pair, and #f otherwise
     """
-    match_type_contract((lambda _: True, ()), args_expr)
+    if not match_type_contract((lambda _: True, ()), args_expr):
+        return Error("Contract error")
     args_expr = cast(ConsCell[Expr, Null], args_expr)
 
     return cont(isPair(car(args_expr)))
 
 
-def exec_isNull(args_expr: ProperList[Expr], env: Env, cont) -> bool:
+def exec_isNull(args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont):
     """
     Procedure: (null? obj)
     Returns #t if obj is null, and #f otherwise
     """
-    match_type_contract((lambda _: True, ()), args_expr)
+    if not match_type_contract((lambda _: True, ()), args_expr):
+        return Error("Contract error")
     args_expr = cast(ConsCell[Expr, Null], args_expr)
 
     return cont(isNull(car(args_expr)))
 
 
-def exec_isNumber(args_expr: ProperList[Expr], env: Env, cont) -> bool:
+def exec_isNumber(
+    args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+):
     """
     Procedure: (number? obj)
     Returns #t if obj is a number, and #f otherwise
     """
-    match_type_contract((lambda _: True, ()), args_expr)
+    if not match_type_contract((lambda _: True, ()), args_expr):
+        return Error("Contract error")
     args_expr = cast(ConsCell[Expr, Null], args_expr)
 
     return cont(isNumber(car(args_expr)))
 
 
-def exec_isSymbol(args_expr: ProperList[Expr], env: Env, cont) -> bool:
+def exec_isSymbol(
+    args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+):
     """
     Procedure: (symbol? obj)
     Returns #t if obj is a symbol, otherwise returns #f.
     """
-    match_type_contract((lambda _: True, ()), args_expr)
+    if not match_type_contract((lambda _: True, ()), args_expr):
+        return Error("Contract error")
     args_expr = cast(ConsCell[Expr, Null], args_expr)
 
     return cont(isinstance(car(args_expr), Symbol))
 
 
-def exec_isBool(args_expr: ProperList[Expr], env: Env, cont) -> bool:
+def exec_isBool(args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont):
     """
     Procedure: (boolean? obj)
     The boolean? predicate returns #t if obj is either #t or #f and returns #f otherwise.
     """
-    match_type_contract((lambda _: True, ()), args_expr)
+    if not match_type_contract((lambda _: True, ()), args_expr):
+        return Error("Contract error")
     args_expr = cast(ConsCell[Expr, Null], args_expr)
     return cont(isinstance(car(args_expr), bool))
 
 
-def exec_isString(args_expr: ProperList[Expr], env: Env, cont) -> bool:
+def exec_isString(
+    args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+):
     """
     Procedure: (string? obj)
     Returns #t if obj is a string, otherwise returns #f.
     """
-    match_type_contract((lambda _: True, ()), args_expr)
+    if not match_type_contract((lambda _: True, ()), args_expr):
+        return Error("Contract error")
     args_expr = cast(ConsCell[Expr, Null], args_expr)
     return cont(isinstance(car(args_expr), str))
 
 
-def exec_numeric_eq(args_expr: ProperList[Expr], env: Env, cont) -> bool:
+def exec_numeric_eq(
+    args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+):
     """
     Procedure: (= x1 x2 x3 ...)
     Return #t if their arguments are equal, and #f otherwise.
     """
-    match_type_contract((isNumber, isNumber), args_expr)
+    if not match_type_contract((isNumber, isNumber), args_expr):
+        return Error("Contract error")
     args = cons_list_to_python_list(args_expr)
     args = cast(list[int | float], args)
     fst = args[0]
@@ -1091,12 +1170,13 @@ def exec_numeric_eq(args_expr: ProperList[Expr], env: Env, cont) -> bool:
     return cont(True)
 
 
-def exec_bool_eq(args_expr: ProperList[Expr], env: Env, cont) -> bool:
+def exec_bool_eq(args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont):
     """
     Procedure: (boolean?= bool1 bool2 bool3 ...)
     Returns #t if all the arguments are #t or all are #f.
     """
-    match_type_contract(lambda x: isinstance(x, bool), args_expr)
+    if not match_type_contract(lambda x: isinstance(x, bool), args_expr):
+        return Error("Contract error")
 
     args = cons_list_to_python_list(args_expr)
 
@@ -1110,12 +1190,15 @@ def exec_bool_eq(args_expr: ProperList[Expr], env: Env, cont) -> bool:
     return cont(True)
 
 
-def exec_symbol_eq(args_expr: ProperList[Expr], env: Env, cont) -> bool:
+def exec_symbol_eq(
+    args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+):
     """
     procedure: (symbol=? symbol1 symbol2 symbol3 ...)
     Returns #t if all the arguments have the same naems in the sense of string=?
     """
-    match_type_contract(lambda x: isinstance(x, Symbol), args_expr)
+    if not match_type_contract(lambda x: isinstance(x, Symbol), args_expr):
+        return Error("Contract error")
     args = cons_list_to_python_list(args_expr)
 
     if len(args) == 0:
@@ -1129,13 +1212,16 @@ def exec_symbol_eq(args_expr: ProperList[Expr], env: Env, cont) -> bool:
     return cont(True)
 
 
-def exec_string_eq(args_expr: ProperList[Expr], env: Env, cont) -> bool:
+def exec_string_eq(
+    args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+) -> Thunk[bool]:  # -> bool:
     """
     Returns #t if all the strings are:
     - the same length and
     - contain exactly the same characters in the same positions
     """
-    match_type_contract(lambda x: isinstance(x, str), args_expr)
+    if not match_type_contract(lambda x: isinstance(x, str), args_expr):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
 
     if isNull(args_expr):
         return cont(True)
@@ -1151,7 +1237,9 @@ def exec_string_eq(args_expr: ProperList[Expr], env: Env, cont) -> bool:
     return cont(True)
 
 
-def exec_eq(args: ProperList[Expr], env: Env, cont) -> bool:
+def exec_eq(
+    args: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+):  # -> bool:
     """
     The most-discriminating equivalence predicate, relies on pointer-equivalence.
 
@@ -1160,7 +1248,8 @@ def exec_eq(args: ProperList[Expr], env: Env, cont) -> bool:
     Strings (eq? "A" "A")
     Numbers (eq? 2 2)
     """
-    match_type_contract((lambda _: True, (lambda _: True, ())), args)
+    if not match_type_contract((lambda _: True, (lambda _: True, ())), args):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
 
     args = cast(ConsCell[Expr, ConsCell[Expr, Null]], args)
 
@@ -1187,16 +1276,19 @@ def exec_eq(args: ProperList[Expr], env: Env, cont) -> bool:
     return cont(False)
 
 
-def isNonNullProperList(l: ProperList[P]) -> TypeGuard[ConsCell[P, ProperList[P]]]:
-    return not isNull(l)
+def isNonNullProperList(lst: ProperList[P]) -> TypeGuard[ConsCell[P, ProperList[P]]]:
+    return not isNull(lst)
 
 
-def exec_eqv(args: ProperList[Expr], env: Env, cont) -> bool:
+def exec_eqv(
+    args: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+):  # -> bool:
     """
     Procedure: (eqv? obj1 obj2)
     Returns true if 2 values are normally considered the same object.
     """
-    match_type_contract((lambda _: True, (lambda _: True, ())), args)
+    if not match_type_contract((lambda _: True, (lambda _: True, ())), args):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
 
     args = cast(ConsCell[Expr, ConsCell[Expr, Null]], args)
 
@@ -1213,12 +1305,21 @@ def exec_eqv(args: ProperList[Expr], env: Env, cont) -> bool:
     return cont(False)
 
 
-def exec_add(args_expr: ProperList[Expr], env: Env, cont) -> int | float:
+def on_error_cannot_be_handled(err):
+    return cons(Error("Exception handler returned"), err)
+
+
+def exec_add(
+    args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+):  # -> int | float:
     """
     Procedure: (+ z1 ...)
     Return the sum of their arguments.
     """
-    match_type_contract(isNumber, args_expr)
+    if not match_type_contract(isNumber, args_expr):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
+
+    # return fk("EXAMPLE FAIL")
 
     args_expr = cast(ConsCell[Expr, ConsCell[Expr, Null]], args_expr)
     args = cons_list_to_python_list(args_expr)
@@ -1229,13 +1330,16 @@ def exec_add(args_expr: ProperList[Expr], env: Env, cont) -> int | float:
     return cont(reduce(lambda x, y: x + y, args))
 
 
-def exec_sub(args_expr: ProperList[Expr], env: Env, cont) -> int | float:
+def exec_sub(
+    args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+):  # -> int | float:
     """
     Procedure: (- z1 z2 ...)
     Returns the difference of the arguments, associating to the left.
     With one argument, return the additive inverse.
     """
-    match_type_contract((isNumber, isNumber), args_expr)
+    if not match_type_contract((isNumber, isNumber), args_expr):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
 
     args_expr = cast(ConsCell[Expr, ConsCell[Expr, Null]], args_expr)
     args = cons_list_to_python_list(args_expr)
@@ -1246,12 +1350,15 @@ def exec_sub(args_expr: ProperList[Expr], env: Env, cont) -> int | float:
     return cont(reduce(lambda x, y: x - y, args))
 
 
-def exec_mul(args_expr: ProperList[Expr], env: Env, cont) -> int | float:
+def exec_mul(
+    args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+):  # -> int | float:
     """
     Procedure: (* z1 ...)
     Return the product of their arguments.
     """
-    match_type_contract(isNumber, args_expr)
+    if not match_type_contract(isNumber, args_expr):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
 
     args_expr = cast(ConsCell[Expr, ConsCell[Expr, Null]], args_expr)
 
@@ -1264,13 +1371,16 @@ def exec_mul(args_expr: ProperList[Expr], env: Env, cont) -> int | float:
     return cont(reduce(lambda x, y: x * y, args))
 
 
-def exec_div(args_expr: ProperList[Expr], env: Env, cont) -> int | float:
+def exec_div(
+    args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+):  # -> int | float:
     """
     Procedure: (/ z1 z2 ...)
     Returns the quotient of the arguments, associating to the left.
     With one argument, return the multiplicative inverse.
     """
-    match_type_contract((isNumber, isNumber), args_expr)
+    if not match_type_contract((isNumber, isNumber), args_expr):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
 
     args_expr = cast(ConsCell[Expr, ConsCell[Expr, Null]], args_expr)
     args = cons_list_to_python_list(args_expr)
@@ -1282,12 +1392,15 @@ def exec_div(args_expr: ProperList[Expr], env: Env, cont) -> int | float:
     return cont(reduce(lambda x, y: x / y, args))
 
 
-def exec_lt(args_expr: ProperList[Expr], env: Env, cont) -> bool:
+def exec_lt(
+    args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+):  # -> bool:
     """
     Procedure: (< x1 x2 x3 ...)
     Return #t if their arguments are monotonically increasing, and #f otherwise.
     """
-    match_type_contract((isNumber, isNumber), args_expr)
+    if not match_type_contract((isNumber, isNumber), args_expr):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
 
     def gt_reduce(values: list[float | int]):
         if len(values) == 1:
@@ -1309,12 +1422,15 @@ def exec_lt(args_expr: ProperList[Expr], env: Env, cont) -> bool:
     return cont(gt_reduce(args))
 
 
-def exec_gt(args_expr: ProperList[Expr], env: Env, cont) -> bool:
+def exec_gt(
+    args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+):  # -> bool:
     """
     Procedure: (> x1 x2 x3 ...)
     Return #t if their arguments are monotonically decreasing, and #f otherwise.
     """
-    match_type_contract((isNumber, isNumber), args_expr)
+    if not match_type_contract((isNumber, isNumber), args_expr):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
 
     def gt_reduce(values: list[float | int]):
         if len(values) == 1:
@@ -1335,13 +1451,16 @@ def exec_gt(args_expr: ProperList[Expr], env: Env, cont) -> bool:
     return cont(gt_reduce(args))
 
 
-def exec_not(args_expr: ProperList[Expr], env: Env, cont) -> bool:
+def exec_not(
+    args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+):  # -> bool:
     """
     Procedure: (not <obj>)
     Returns #t if obj is false, and returns #f otherwise.
     """
     # Accepts any type
-    match_type_contract((lambda _: True, ()), args_expr)
+    if not match_type_contract((lambda _: True, ()), args_expr):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
 
     if isPair(args_expr):
         if not isNull(cdr(args_expr)):
@@ -1352,13 +1471,16 @@ def exec_not(args_expr: ProperList[Expr], env: Env, cont) -> bool:
     raise InterpreterException("No arguments provided to `not`")
 
 
-def exec_cons(args: ProperList[Expr], env: Env, cont) -> ConsCell:
+def exec_cons(
+    args: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+):  # -> ConsCell:
     """
     Procedure: (cons obj1 obj2)
     Returns a newly allocated pair whose car is obj1 and whose cdr is obj2.
     The pair is guaranteed to be different (in the sense of eqv?) from every existing object.
     """
-    match_type_contract((lambda _: True, (lambda _: True, ())), args)
+    if not match_type_contract((lambda _: True, (lambda _: True, ())), args):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
     args = cast(ConsCell[Expr, ConsCell[Expr, Null]], args)
 
     fst = car(args)
@@ -1368,48 +1490,58 @@ def exec_cons(args: ProperList[Expr], env: Env, cont) -> ConsCell:
     return cont(cons(fst, snd))
 
 
-def exec_car(args_expr: ProperList[Expr], env: Env, cont) -> Expr:
+def exec_car(
+    args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+) -> Expr:
     """
     Procedure: (car <pair>)
     Returns the contents of the car field of pair.
     Note that it is an error to take the car of the empty list.
     """
     logger.debug(f"Evaluating `car` on: {args_expr}")
-    match_type_contract((isPair, ()), args_expr)
+    if not match_type_contract((isPair, ()), args_expr):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
     args_expr = cast(ConsCell[ConsCell[Expr, Expr], Null], args_expr)
     return cont(car(car(args_expr)))
 
 
-def exec_cdr(args_expr: ProperList[Expr], env: Env, cont) -> Expr:
+def exec_cdr(
+    args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+) -> Expr:
     """
     Procedure: (cdr <pair>)
     Returns the contents of the cdr field of pair.
     Note that it is an error to take the cdr of the empty list.
     """
     logger.debug(f"Evaluating `cdr` on: {args_expr}")
-    match_type_contract((isPair, ()), args_expr)
+    if not match_type_contract((isPair, ()), args_expr):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
     args_expr = cast(ConsCell[ConsCell, Null], args_expr)
     return cont(cdr(car(args_expr)))
 
 
-def exec_reverse(args_expr: ProperList[Expr], env: Env, cont) -> ProperList[Expr]:
+def exec_reverse(
+    args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+):  # -> ProperList[Expr]:
     """
     Procedure: (reverse <list>)
     Returns a newly allocated list consisting of the elements of list in reverse order.
     """
     # todo: use real isProperList check
-    match_type_contract(lambda x: isPair(x) or isNull(x), args_expr)
+    if not match_type_contract(lambda x: isPair(x) or isNull(x), args_expr):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
     args_expr = cast(ConsCell[ProperList[Expr], Null], args_expr)
     arg = car(args_expr)
     return cont(reverse(arg))
 
 
-def exec_length(args_expr: ProperList[Expr], env: Env, cont) -> int:
+def exec_length(args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont):
     """
     Procedure: (length <list>)
     Returns the length of <list>
     """
-    match_type_contract((lambda x: isPair(x) or isNull(x), ()), args_expr)
+    if not match_type_contract((lambda x: isPair(x) or isNull(x), ()), args_expr):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
     args_expr = cast(ConsCell[ProperList[Expr], Null], args_expr)
 
     arg = car(args_expr)
@@ -1431,9 +1563,10 @@ def _concat(list1: Expr, list2: Expr) -> Expr:
 def _append(expr: ProperList[Expr]):
     if isNull(expr):
         return ()
-    match_type_contract(
+    if not match_type_contract(
         (lambda _: True, lambda x: isPair(x) or isNull(x)), reverse(expr)
-    )
+    ):
+        raise Exception(">>>>>>")
 
     expr = cast(ConsCell, expr)
 
@@ -1449,7 +1582,9 @@ def _append(expr: ProperList[Expr]):
 
 
 # APPEND HAS A MORE COMPLEX TYPE CONTRACT
-def exec_append(expr: ProperList[Expr], env: Env, cont) -> Expr:
+def exec_append(
+    expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+) -> Expr:
     """
     Procedure: (append <list> …)
 
@@ -1465,21 +1600,24 @@ def exec_append(expr: ProperList[Expr], env: Env, cont) -> Expr:
     """
     if isNull(expr):
         return ()
-    match_type_contract(
+    if not match_type_contract(
         (lambda _: True, lambda x: isPair(x) or isNull(x)), reverse(expr)
-    )
+    ):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
 
     expr = cast(ConsCell, expr)
     return cont(_append(expr))
 
 
-def exec_apply(args_expr: ProperList[Expr], env: Env, cont) -> Expr:
+def exec_apply(
+    args_expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+) -> Thunk:
     """
     Procedure: (apply <proc> <arg1> … <args>)
     The apply procedure calls proc with the elements of the list
     (append (list arg1 …) args) as the actual arguments.
     """
-    match_type_contract(
+    if not match_type_contract(
         (
             lambda x: callable(x)
             or isinstance(x, Procedure)
@@ -1487,7 +1625,8 @@ def exec_apply(args_expr: ProperList[Expr], env: Env, cont) -> Expr:
             (lambda x: isPair(x) or isNull(x), ()),
         ),
         args_expr,
-    )
+    ):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
 
     args_expr = cast(ConsCell[Procedure, ConsCell[ProperList[Expr], Null]], args_expr)
 
@@ -1497,46 +1636,53 @@ def exec_apply(args_expr: ProperList[Expr], env: Env, cont) -> Expr:
 
     if callable(f):
         # apply a builtin procedure
-        return apply_primitive_procedure(f, args, env, cont)
+        return apply_primitive_procedure(f, args, env, cont, fk)
     elif isinstance(f, Continuation):
         # apply a continuation
-        return apply_continuation(f, args, env, dynamic_wind_stack[:])
+        return apply_continuation(f, args, env, dynamic_wind_stack[:], fk)
     elif isinstance(f, Procedure):
         # apply a user-defined procedure
-        return apply_procedure(f, args, cont)
+        return apply_procedure(f, args, cont, fk)
     else:
         raise Exception(
             f"Unimplemented -- tried to apply a non procedure or builtin function: {expr}"
         )
 
 
-def exec_display(args_expr: ProperList[Expr], env: Env, cont) -> Expr:
+def exec_display(args_expr: ProperList[Expr], env: Env, cont, fk: FailCont) -> Expr:
     # todo: this shouldn't use pformat -- should display a quoted version of the data
-    match_type_contract(
+    if not match_type_contract(
         (lambda x: True, ()),
         args_expr,
-    )
+    ):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
     args_expr = cast(ConsCell[Expr, Null], args_expr)
     print(car(args_expr), end="", flush=True)
     return cont(())
 
 
-def exec_newline(expr: ProperList[Expr], env: Env, cont) -> Expr:
+def exec_newline(expr: ProperList[Expr], env: Env, cont, fk: FailCont) -> Expr:
     if not isNull(expr):
         raise Exception("`newline` takes no arguments.")
     print(flush=True)
     return cont(())
 
 
-def exec_pretty_print(expr: ProperList[Expr], env: Env, cont) -> Expr:
+def exec_pretty_print(
+    expr: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+) -> Expr:
     if isPair(expr):
         if isNull(cdr(expr)):
+            # print("\x1b[38;2;255;100;0mTRUECOLOR\x1b[0m\n")
+            # print("Printing:", car(expr), end="\n", flush=True)
             pretty_print(car(expr))
             return cont(())
     raise Exception("`pretty-print` should only recieve one argument.")
 
 
-def exec_dynamic_wind(arg_exprs: ProperList[Expr], env: Env, cont: InterpCont) -> Thunk:
+def exec_dynamic_wind(
+    arg_exprs: ProperList[Expr], env: Env, cont: InterpCont, fk: FailCont
+) -> Thunk:
     """
     Procedure: (dynamic-wind before thunk after)
 
@@ -1550,16 +1696,17 @@ def exec_dynamic_wind(arg_exprs: ProperList[Expr], env: Env, cont: InterpCont) -
     """
     global dynamic_wind_stack
 
-    match_type_contract(
-        (
-            lambda x: isinstance(x, Procedure),
-            (
-                lambda y: isinstance(y, Procedure),
-                (lambda z: isinstance(z, Procedure), ()),
-            ),
-        ),
-        arg_exprs,
-    )
+    # if not match_type_contract(
+    #     (
+    #         lambda x: isinstance(x, Procedure),
+    #         (
+    #             lambda y: isinstance(y, Procedure),
+    #             (lambda z: isinstance(z, Procedure), ()),
+    #         ),
+    #     ),
+    #     arg_exprs,
+    # ):
+    #     return fk(Error("Contract error"))
 
     arg_exprs = cast(
         ConsCell[Procedure, ConsCell[Procedure, ConsCell[Procedure, Null]]], arg_exprs
@@ -1573,16 +1720,21 @@ def exec_dynamic_wind(arg_exprs: ProperList[Expr], env: Env, cont: InterpCont) -
         dynamic_wind_stack.append((before, after))
 
         def run_body(result):
-            return evaluate(
-                after.body, env, lambda _: (dynamic_wind_stack.pop(), cont(result))[1]
+            return eval_sequence(
+                after.body,
+                env,
+                lambda _: (dynamic_wind_stack.pop(), cont(result))[1],
+                fk,
             )
 
-        return evaluate(body.body, env, run_body)
+        return eval_sequence(body.body, env, run_body, fk)
 
-    return evaluate(before.body, env, run_before)
+    return eval_sequence(before.body, env, run_before, fk)
 
 
-def exec_callcc(arg_exprs: ProperList[Expr], env: Env, k: InterpCont) -> Thunk:
+def exec_callcc(
+    arg_exprs: ProperList[Expr], env: Env, k: InterpCont, fk: FailCont
+) -> Thunk:
     """
     Procedure: (call/cc proc)
     It is an error if proc does not accept one argument.
@@ -1607,10 +1759,95 @@ def exec_callcc(arg_exprs: ProperList[Expr], env: Env, k: InterpCont) -> Thunk:
 
     # snapshot the dynamic-wind state
     cont = Continuation(k, dynamic_wind_stack[:])
-    return evaluate(f.body, Env(f.parms, (cont, ()), env), k)
+    return eval_sequence(f.body, Env(f.parms, (cont, ()), env), k, fk)
 
 
-def exec_read(arg_exprs: ProperList[Expr], env: Env, k: InterpCont):
+def exec_with_exception_handler(
+    arg_exprs: ProperList[Expr], env: Env, k: InterpCont, fk: FailCont
+) -> Thunk:
+    """
+    procedure: (with-exception-handler handler thunk)
+    It is an error if handler does not accept one argument.
+    It is also an error if thunk does not accept zero arguments.
+
+    Handler is installed as the exception handler for the invocation of thunk.
+    The result of invoking thunk is returned.
+    """
+    if not match_type_contract(
+        (lambda h: isinstance(h, Procedure), (lambda t: isinstance(t, Procedure), ())),
+        arg_exprs,
+    ):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
+    arg_exprs = cast(ConsCell[Procedure, ConsCell[Procedure, Null]], arg_exprs)
+
+    handler = car(arg_exprs)
+    thunk = cadr(arg_exprs)
+
+    # todo: this seems gross
+    return lambda: exec_apply(
+        (thunk, ((), ())),
+        env,
+        k,
+        lambda err, _k: exec_apply(
+            (handler, ((err, ()), ())),
+            env,
+            _k,
+            fk,
+        ),
+    )
+
+
+def exec_raise(
+    arg_exprs: ProperList[Expr], env: Env, k: InterpCont, fk: FailCont
+) -> Thunk:
+    """
+    procedure: (raise obj)
+    Raises an exception by invoking the current exception handler on obj.
+    If the exception handler returns, a secondary error should be raised.
+    (i.e. the handler should raise another error or call a continuation)
+    """
+    if not match_type_contract((lambda _: True, ()), arg_exprs):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
+    arg_exprs = cast(ConsCell[Expr, Null], arg_exprs)
+
+    err = car(arg_exprs)
+
+    def on_handled(returned_val):
+        # print("HANDLED ERR:", returned_val)
+        return cons(Error("Exception handler returned"), returned_val)
+
+    # todo: implement the correct secondary error stuff
+    return lambda: fk(err, on_handled)
+
+
+def exec_raise_cont(
+    arg_exprs: ProperList[Expr], env: Env, k: InterpCont, fk: FailCont
+) -> Thunk:
+    """
+    procedure: (raise-continuable obj)
+    Raises an exception by invoking the current exception handler on obj.
+    If the handler being called returns,
+    - it (again) becomes the current exception handler.
+    - the values it returns become the values returned by the call to raise-continuable.
+    """
+
+    if not match_type_contract((lambda _: True, ()), arg_exprs):
+        return fk(Error("Contract error"), on_error_cannot_be_handled)
+    arg_exprs = cast(ConsCell[Expr, Null], arg_exprs)
+
+    err = car(arg_exprs)
+
+    # todo: implement the correct secondary error stuff
+    # print("calling fail cont:", fk)
+
+    def on_handled(returned_val):
+        # print("HANDLED ERR:", returned_val)
+        return returned_val
+
+    return lambda: fk(err, on_handled)
+
+
+def exec_read(arg_exprs: ProperList[Expr], env: Env, k: InterpCont, fk: FailCont):
     """
     Procedure: (read)
                (read <port>)
@@ -1651,7 +1888,7 @@ def standard_env():
         "cons": exec_cons,
         "car": exec_car,
         "cdr": exec_cdr,
-        "list": lambda args, _env, k: k(args),
+        "list": lambda args, _env, k, _fk: k(args),
         "append": exec_append,
         "length": exec_length,
         "reverse": exec_reverse,  # needs a test
@@ -1660,7 +1897,7 @@ def standard_env():
         "dynamic-wind": exec_dynamic_wind,
         "call/cc": exec_callcc,
         # UNTESTED:
-        "eval": lambda expr, env, k: evaluate(car(expr), env, k),
+        "eval": lambda expr, env, k, fk: evaluate(car(expr), env, k, fk),
         # InPort Procedures
         "open-input-file": lambda fname: InPort(open(fname, "r")),
         "read": exec_read,
@@ -1673,15 +1910,23 @@ def standard_env():
         "display": exec_pretty_print,
         "pretty-print": exec_pretty_print,
         "newline": exec_newline,
+        "raise": exec_raise,
+        "raise-continuable": exec_raise_cont,
+        "with-exception-handler": exec_with_exception_handler,
     }
     return env
 
 
 if __name__ == "__main__":
     env = standard_env()
+
+    def handle_fail(x, _fail_cont):
+        raise Exception(f"Interpretation Failure! {x}")
+        return lambda: ()
+
     with open("boot.scm", "r") as bootfile:
         expr = None
         while expr is not EOF_OBJECT:
             expr = read(InPort(bootfile))
             if expr is not EOF_OBJECT:
-                result = trampoline(evaluate(expr, env, lambda x: x))
+                result = trampoline(evaluate(expr, env, lambda x: x, handle_fail))

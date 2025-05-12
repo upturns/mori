@@ -1,11 +1,9 @@
 from interp import (
     InPort,
-    InterpreterException,
     Procedure,
     Symbol,
-    # extract_bindings,
+    # cdr,
     # isNumber,
-    # isPair,
     # match_type_contract,
     pformat,
     read,
@@ -13,6 +11,7 @@ from interp import (
     # reverse,
     standard_env,
     trampoline,
+    Error,
 )
 from io import StringIO
 import unittest
@@ -24,7 +23,7 @@ def i(s: str, env=None):
         env = standard_env()
     x = InPort(StringIO(s))
     i = read(x)
-    return trampoline(evaluate(i, env, lambda x: x)), env
+    return trampoline(evaluate(i, env, lambda x: x, lambda x, _k: x)), env
 
 
 # class TestContractMatcher(unittest.TestCase):
@@ -40,8 +39,90 @@ def i(s: str, env=None):
 #             {"fst": 1, "rest": (2, (3, ()))},
 #         )
 
-#     def test_type_contract(self):
-#         self.assertTrue(match_type_contract((isNumber, ()), (1, ())))
+# def test_type_contract(self):
+#     # self.assertTrue(match_type_contract((isNumber, ()), (1, ())))
+
+#     # match improper list
+#     # self.assertTrue(match_type_contract((isNumber, isNumber), (1, 2)))
+#     # self.assertFalse(match_type_contract((isNumber, isNumber), (1, (2, ()))))
+
+#     # match basic define
+#     self.assertTrue(
+#         match_type_contract(
+#             (lambda x: isinstance(x, Symbol), (lambda _: True, ())),
+#             cdr(
+#                 read(
+#                     InPort(
+#                         StringIO("""
+#                         (define x 99)
+#                     """)
+#                     )
+#                 )  # type: ignore
+#             ),
+#         )
+#     )
+
+#     # match define fixed-args lambda
+
+#     self.assertTrue(
+#         match_type_contract(
+#             (
+#                 lambda x: match_type_contract(
+#                     (
+#                         lambda x: isinstance(x, Symbol),
+#                         lambda x: isinstance(x, Symbol),
+#                     ),
+#                     x,
+#                 ),
+#                 (lambda _: True, ()),
+#             ),
+#             cdr(
+#                 read(
+#                     InPort(
+#                         StringIO("""
+#                         (define (dbl x) (* 2 x))
+#                     """)
+#                     )
+#                 )  # type: ignore
+#             ),
+#         )
+#     )
+
+#     # match define variadic-args lambda
+#     print(
+#         read(
+#             InPort(
+#                 StringIO("""
+#                         (define (sum x y . z) (+ x y z))
+#                     """)
+#             )
+#         )
+#     )
+#     self.assertTrue(
+#         match_type_contract(
+#             (
+#                 lambda x: match_type_contract(
+#                     (
+#                         lambda x: isinstance(x, Symbol),
+#                         lambda x: isinstance(x, Symbol),
+#                     ),
+#                     x,
+#                 ),
+#                 (lambda _: True, ()),
+#             ),
+#             cdr(
+#                 read(
+#                     InPort(
+#                         StringIO("""
+#                         (define (sum x y . z) (+ x y z))
+#                     """)
+#                     )
+#                 )  # type: ignore
+#             ),
+#         )
+#     )
+
+
 #         self.assertTrue(
 #             match_type_contract((lambda x: isinstance(x, str), ()), ("A", ()))
 #         )
@@ -470,10 +551,21 @@ class TestStringMethods(unittest.TestCase):
         )
 
 
+class TestEvalSpecialForms(unittest.TestCase):
+    def test_eval_lambda(self):
+        # basics
+        self.assertIsInstance(i("(lambda () 99)")[0], Procedure)
+        self.assertIsInstance(i("(lambda (x) x)")[0], Procedure)
+        # multi-statement body
+        self.assertIsInstance(
+            i('(lambda () (display "Hello") (display " World"))')[0], Procedure
+        )
+
+
 class TestPrimitiveProcedures(unittest.TestCase):
     def test_null_pred(self):
         # 0 args fails
-        self.assertRaises(InterpreterException, lambda: i("(null?)")[0])
+        self.assertEqual(i("(null?)")[0], Error("Contract error"))
         # 1 arg
         self.assertTrue(i("(null? '())")[0])
         self.assertFalse(i("(null? 1)")[0])
@@ -484,13 +576,13 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertFalse(i("(null? #f)")[0])
         self.assertFalse(i("(null? '(1 2 3))")[0])
         # 2+ args fails
-        self.assertRaises(InterpreterException, lambda: i("(null? '() '() #f)")[0])
-        self.assertRaises(InterpreterException, lambda: i("(null? #f #f '())")[0])
-        self.assertRaises(InterpreterException, lambda: i("(null? '() '())")[0])
+        self.assertEqual(i("(null? '() '() #f)")[0], Error("Contract error"))
+        self.assertEqual(i("(null? #f #f '())")[0], Error("Contract error"))
+        self.assertEqual(i("(null? '() '())")[0], Error("Contract error"))
 
     def test_number_pred(self):
         # 0 args fails
-        self.assertRaises(InterpreterException, lambda: i("(number?)")[0])
+        self.assertEqual(i("(number?)")[0], Error("Contract error"))
         # 1 arg
         self.assertFalse(i("(number? '())")[0])
         self.assertTrue(i("(number? 1)")[0])
@@ -503,13 +595,13 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertFalse(i("(number? #f)")[0])
         self.assertFalse(i("(number? '(1 2 3))")[0])
         # 2+ args fails
-        self.assertRaises(InterpreterException, lambda: i("(number? 1 2 #f)")[0])
-        self.assertRaises(InterpreterException, lambda: i("(number? #f #f 3.14)")[0])
-        self.assertRaises(InterpreterException, lambda: i("(number? 99 100)")[0])
+        self.assertEqual(i("(number? 1 2 #f)")[0], Error("Contract error"))
+        self.assertEqual(i("(number? #f #f 3.14)")[0], Error("Contract error"))
+        self.assertEqual(i("(number? 99 100)")[0], Error("Contract error"))
 
     def test_string_pred(self):
         # 0 args fails
-        self.assertRaises(InterpreterException, lambda: i("(string?)")[0])
+        self.assertEqual(i("(string?)")[0], Error("Contract error"))
         # 1 arg
         self.assertFalse(i("(string? '())")[0])
         self.assertFalse(i("(string? 1)")[0])
@@ -525,13 +617,13 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertFalse(i("(string? #f)")[0])
         self.assertFalse(i("(string? '(1 2 3))")[0])
         # 2+ args fails
-        self.assertRaises(InterpreterException, lambda: i('(string? "A" "B" #f)')[0])
-        self.assertRaises(InterpreterException, lambda: i('(string? #f #f "A")')[0])
-        self.assertRaises(InterpreterException, lambda: i('(string? "A" "B")')[0])
+        self.assertEqual(i('(string? "A" "B" #f)')[0], Error("Contract error"))
+        self.assertEqual(i('(string? #f #f "A")')[0], Error("Contract error"))
+        self.assertEqual(i('(string? "A" "B")')[0], Error("Contract error"))
 
     def test_symbol_pred(self):
         # 0 args fails
-        self.assertRaises(InterpreterException, lambda: i("(symbol?)")[0])
+        self.assertEqual(i("(symbol?)")[0], Error("Contract error"))
         # 1 arg
         self.assertFalse(i("(symbol? '())")[0])
         self.assertFalse(i("(symbol? 1)")[0])
@@ -547,13 +639,13 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertFalse(i("(symbol? #f)")[0])
         self.assertFalse(i("(symbol? '(1 2 3))")[0])
         # 2+ args fails
-        self.assertRaises(InterpreterException, lambda: i("(symbol? 'A 'B #f)")[0])
-        self.assertRaises(InterpreterException, lambda: i("(symbol? #f #t 'A)")[0])
-        self.assertRaises(InterpreterException, lambda: i("(symbol? 'A 'B)")[0])
+        self.assertEqual(i("(symbol? 'A 'B #f)")[0], Error("Contract error"))
+        self.assertEqual(i("(symbol? #f #t 'A)")[0], Error("Contract error"))
+        self.assertEqual(i("(symbol? 'A 'B)")[0], Error("Contract error"))
 
     def test_pair_pred(self):
         # 0 args fails
-        self.assertRaises(InterpreterException, lambda: i("(pair?)")[0])
+        self.assertEqual(i("(pair?)")[0], Error("Contract error"))
         # 1 arg
         self.assertFalse(i("(pair? '())")[0])
         self.assertFalse(i("(pair? 1)")[0])
@@ -572,11 +664,9 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertTrue(i("(pair? '(() . ()))")[0])
         self.assertTrue(i("(pair? '(() ()))")[0])
         # 2+ args fails
-        self.assertRaises(
-            InterpreterException, lambda: i("(pair? '(1 2) '(3 4) #f)")[0]
-        )
-        self.assertRaises(InterpreterException, lambda: i("(pair? #f #t '(1 2))")[0])
-        self.assertRaises(InterpreterException, lambda: i("(pair? '(1 2) '(3 4))")[0])
+        self.assertEqual(i("(pair? '(1 2) '(3 4) #f)")[0], Error("Contract error"))
+        self.assertEqual(i("(pair? #f #t '(1 2))")[0], Error("Contract error"))
+        self.assertEqual(i("(pair? '(1 2) '(3 4))")[0], Error("Contract error"))
 
     def test_sum(self):
         # no args returns 0
@@ -591,18 +681,18 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertEqual(i("(+ -10 10.0)")[0], 0)
         self.assertEqual(i("(+ 1 2 3)")[0], 6)
 
-        self.assertRaises(InterpreterException, lambda: i("(+ 1 'a)")[0])
-        self.assertRaises(InterpreterException, lambda: i("(+ 'a 'a)")[0])
-        self.assertRaises(InterpreterException, lambda: i("(+ #f 0)")[0])
-        self.assertRaises(InterpreterException, lambda: i('(+ "A" 0)')[0])
-        self.assertRaises(InterpreterException, lambda: i('(+ "A" "B")')[0])
-        self.assertRaises(InterpreterException, lambda: i("(+ 1 '())")[0])
-        self.assertRaises(InterpreterException, lambda: i("(+ 1 '(1))")[0])
-        self.assertRaises(InterpreterException, lambda: i("(+ '() '())")[0])
+        self.assertEqual(i("(+ 1 'a)")[0], Error("Contract error"))
+        self.assertEqual(i("(+ 'a 'a)")[0], Error("Contract error"))
+        self.assertEqual(i("(+ #f 0)")[0], Error("Contract error"))
+        self.assertEqual(i('(+ "A" 0)')[0], Error("Contract error"))
+        self.assertEqual(i('(+ "A" "B")')[0], Error("Contract error"))
+        self.assertEqual(i("(+ 1 '())")[0], Error("Contract error"))
+        self.assertEqual(i("(+ 1 '(1))")[0], Error("Contract error"))
+        self.assertEqual(i("(+ '() '())")[0], Error("Contract error"))
 
     def test_sub(self):
         # no args fails
-        self.assertRaises(InterpreterException, lambda: i("(-)"))
+        self.assertEqual(i("(-)")[0], Error("Contract error"))
         # 1 arg
         self.assertEqual(i("(- 1)")[0], -1)
         self.assertEqual(i("(- 3.14)")[0], -3.14)
@@ -612,14 +702,14 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertEqual(i("(- -10 10.0)")[0], -20)
         self.assertEqual(i("(- 1 2 3)")[0], -4)
 
-        self.assertRaises(InterpreterException, lambda: i("(- 1 'a)")[0])
-        self.assertRaises(InterpreterException, lambda: i("(- 'a 'a)")[0])
-        self.assertRaises(InterpreterException, lambda: i("(- #f 0)")[0])
-        self.assertRaises(InterpreterException, lambda: i('(- "A" 0)')[0])
-        self.assertRaises(InterpreterException, lambda: i('(- "A" "B")')[0])
-        self.assertRaises(InterpreterException, lambda: i("(- 1 '())")[0])
-        self.assertRaises(InterpreterException, lambda: i("(- 1 '(1))")[0])
-        self.assertRaises(InterpreterException, lambda: i("(- '() '())")[0])
+        self.assertEqual(i("(- 1 'a)")[0], Error("Contract error"))
+        self.assertEqual(i("(- 'a 'a)")[0], Error("Contract error"))
+        self.assertEqual(i("(- #f 0)")[0], Error("Contract error"))
+        self.assertEqual(i('(- "A" 0)')[0], Error("Contract error"))
+        self.assertEqual(i('(- "A" "B")')[0], Error("Contract error"))
+        self.assertEqual(i("(- 1 '())")[0], Error("Contract error"))
+        self.assertEqual(i("(- 1 '(1))")[0], Error("Contract error"))
+        self.assertEqual(i("(- '() '())")[0], Error("Contract error"))
 
     def test_mul(self):
         # no args returns 1
@@ -635,18 +725,18 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertEqual(i("(* 1 2 3)")[0], 6)
         self.assertEqual(i("(* 2 3 4 5)")[0], 120)
 
-        self.assertRaises(InterpreterException, lambda: i("(* 1 'a)")[0])
-        self.assertRaises(InterpreterException, lambda: i("(* 'a 'a)")[0])
-        self.assertRaises(InterpreterException, lambda: i("(* #f 0)")[0])
-        self.assertRaises(InterpreterException, lambda: i('(* "A" 0)')[0])
-        self.assertRaises(InterpreterException, lambda: i('(* "A" "B")')[0])
-        self.assertRaises(InterpreterException, lambda: i("(* 1 '())")[0])
-        self.assertRaises(InterpreterException, lambda: i("(* 1 '(1))")[0])
-        self.assertRaises(InterpreterException, lambda: i("(* '() '())")[0])
+        self.assertEqual(i("(* 1 'a)")[0], Error("Contract error"))
+        self.assertEqual(i("(* 'a 'a)")[0], Error("Contract error"))
+        self.assertEqual(i("(* #f 0)")[0], Error("Contract error"))
+        self.assertEqual(i('(* "A" 0)')[0], Error("Contract error"))
+        self.assertEqual(i('(* "A" "B")')[0], Error("Contract error"))
+        self.assertEqual(i("(* 1 '())")[0], Error("Contract error"))
+        self.assertEqual(i("(* 1 '(1))")[0], Error("Contract error"))
+        self.assertEqual(i("(* '() '())")[0], Error("Contract error"))
 
     def test_div(self):
         # fails with 0 args
-        self.assertRaises(InterpreterException, lambda: i("(/)"))
+        self.assertEqual(i("(/)")[0], Error("Contract error"))
         # 1 arg returns it's reciprocal
         self.assertEqual(i("(/ 1)")[0], 1)
         self.assertEqual(i("(/ 2)")[0], 1 / 2)
@@ -664,18 +754,18 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertRaises(ZeroDivisionError, lambda: i("(/ 1 2 0)")[0])
 
         # wrong input types
-        self.assertRaises(InterpreterException, lambda: i("(/ 1 'a)")[0])
-        self.assertRaises(InterpreterException, lambda: i("(/ 'a 'a)")[0])
-        self.assertRaises(InterpreterException, lambda: i("(/ #f 0)")[0])
-        self.assertRaises(InterpreterException, lambda: i('(/ "A" 0)')[0])
-        self.assertRaises(InterpreterException, lambda: i('(/ "A" "B")')[0])
-        self.assertRaises(InterpreterException, lambda: i("(/ 1 '())")[0])
-        self.assertRaises(InterpreterException, lambda: i("(/ 1 '(1))")[0])
-        self.assertRaises(InterpreterException, lambda: i("(/ '() '())")[0])
+        self.assertEqual(i("(/ 1 'a)")[0], Error("Contract error"))
+        self.assertEqual(i("(/ 'a 'a)")[0], Error("Contract error"))
+        self.assertEqual(i("(/ #f 0)")[0], Error("Contract error"))
+        self.assertEqual(i('(/ "A" 0)')[0], Error("Contract error"))
+        self.assertEqual(i('(/ "A" "B")')[0], Error("Contract error"))
+        self.assertEqual(i("(/ 1 '())")[0], Error("Contract error"))
+        self.assertEqual(i("(/ 1 '(1))")[0], Error("Contract error"))
+        self.assertEqual(i("(/ '() '())")[0], Error("Contract error"))
 
     def test_lt(self):
         # fails with 0 args
-        self.assertRaises(InterpreterException, lambda: i("(<)"))
+        self.assertEqual(i("(<)")[0], Error("Contract error"))
         # basic 2 arg case
         self.assertTrue(i("(< 0 1)")[0])
         self.assertTrue(i("(< 1 99)")[0])
@@ -691,22 +781,22 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertTrue(i("(< 1 2 3)")[0])
         self.assertFalse(i("(< 1 3 2)")[0])
 
-        self.assertRaises(InterpreterException, lambda: i("(< 1 'a)")[0])
-        self.assertRaises(InterpreterException, lambda: i("(< 'a 'a)")[0])
-        self.assertRaises(InterpreterException, lambda: i("(< #f 0)")[0])
-        self.assertRaises(InterpreterException, lambda: i('(< "A" 0)')[0])
-        self.assertRaises(InterpreterException, lambda: i('(< "A" "B")')[0])
-        self.assertRaises(InterpreterException, lambda: i("(< 1 '())")[0])
-        self.assertRaises(InterpreterException, lambda: i("(< 1 '(1))")[0])
-        self.assertRaises(InterpreterException, lambda: i("(< '() '())")[0])
-        self.assertRaises(InterpreterException, lambda: i("(< 1 2 'a)")[0])
+        self.assertEqual(i("(< 1 'a)")[0], Error("Contract error"))
+        self.assertEqual(i("(< 'a 'a)")[0], Error("Contract error"))
+        self.assertEqual(i("(< #f 0)")[0], Error("Contract error"))
+        self.assertEqual(i('(< "A" 0)')[0], Error("Contract error"))
+        self.assertEqual(i('(< "A" "B")')[0], Error("Contract error"))
+        self.assertEqual(i("(< 1 '())")[0], Error("Contract error"))
+        self.assertEqual(i("(< 1 '(1))")[0], Error("Contract error"))
+        self.assertEqual(i("(< '() '())")[0], Error("Contract error"))
+        self.assertEqual(i("(< 1 2 'a)")[0], Error("Contract error"))
 
         # ensure type error is thrown before any comparisons are made
-        self.assertRaises(InterpreterException, lambda: i("(< 2 1'a)")[0])
+        self.assertEqual(i("(< 2 1'a)")[0], Error("Contract error"))
 
     def test_gt(self):
         # fails with 0 args
-        self.assertRaises(InterpreterException, lambda: i("(>)"))
+        self.assertEqual(i("(>)")[0], Error("Contract error"))
 
         # basic 2 arg case
         self.assertTrue(i("(> 1 0)")[0])
@@ -723,29 +813,29 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertTrue(i("(> 3 2 1)")[0])
         self.assertFalse(i("(> 2 3 1)")[0])
 
-        self.assertRaises(InterpreterException, lambda: i("(> 1 'a)")[0])
-        self.assertRaises(InterpreterException, lambda: i("(> 'a 'a)")[0])
-        self.assertRaises(InterpreterException, lambda: i("(> #f 0)")[0])
-        self.assertRaises(InterpreterException, lambda: i('(> "A" 0)')[0])
-        self.assertRaises(InterpreterException, lambda: i('(> "A" "B")')[0])
-        self.assertRaises(InterpreterException, lambda: i("(> 1 '())")[0])
-        self.assertRaises(InterpreterException, lambda: i("(> 1 '(1))")[0])
-        self.assertRaises(InterpreterException, lambda: i("(> '() '())")[0])
+        self.assertEqual(i("(> 1 'a)")[0], Error("Contract error"))
+        self.assertEqual(i("(> 'a 'a)")[0], Error("Contract error"))
+        self.assertEqual(i("(> #f 0)")[0], Error("Contract error"))
+        self.assertEqual(i('(> "A" 0)')[0], Error("Contract error"))
+        self.assertEqual(i('(> "A" "B")')[0], Error("Contract error"))
+        self.assertEqual(i("(> 1 '())")[0], Error("Contract error"))
+        self.assertEqual(i("(> 1 '(1))")[0], Error("Contract error"))
+        self.assertEqual(i("(> '() '())")[0], Error("Contract error"))
 
         # ensure type error is thrown before any comparisons are made
-        self.assertRaises(InterpreterException, lambda: i("(> 1 2 'a)")[0])
+        self.assertEqual(i("(> 1 2 'a)")[0], Error("Contract error"))
 
     def test_not(self):
         # 0 args fails
-        self.assertRaises(InterpreterException, lambda: i("(not)"))
+        self.assertEqual(i("(not)")[0], Error("Contract error"))
         # 1 args works for booleans
         self.assertTrue(i("(not #f)")[0])
         self.assertFalse(i("(not #t)")[0])
         # 2+ args fails
-        self.assertRaises(InterpreterException, lambda: i("(not #t #t)"))
-        self.assertRaises(InterpreterException, lambda: i("(not #f #f)"))
-        self.assertRaises(InterpreterException, lambda: i("(not #t #f #t)"))
-        self.assertRaises(InterpreterException, lambda: i("(not #t #f 'a)"))
+        self.assertEqual(i("(not #t #t)")[0], Error("Contract error"))
+        self.assertEqual(i("(not #f #f)")[0], Error("Contract error"))
+        self.assertEqual(i("(not #t #f #t)")[0], Error("Contract error"))
+        self.assertEqual(i("(not #t #f 'a)")[0], Error("Contract error"))
         # any non-bool input returns false
         self.assertFalse(i("(not 'a)")[0])
         self.assertFalse(i('(not "A")')[0])
@@ -757,9 +847,9 @@ class TestPrimitiveProcedures(unittest.TestCase):
     def test_eq(self):
         # Tests whether two objects are the same exact object in memory.
         # 0 args fails
-        self.assertRaises(InterpreterException, lambda: i("(eq?)"))
+        self.assertEqual(i("(eq?)")[0], Error("Contract error"))
         # 1 arg fails
-        self.assertRaises(InterpreterException, lambda: i("(eq? #t)"))
+        self.assertEqual(i("(eq? #t)")[0], Error("Contract error"))
         # 2 args works
         # positive cases
         self.assertTrue(i("(eq? #t #t)")[0])
@@ -782,14 +872,14 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertFalse(i("(eq? '(1 2 3) '(1 2 3))")[0])
 
         # 3+ args fails
-        self.assertRaises(InterpreterException, lambda: i("(eq? 1 1 1)"))
+        self.assertEqual(i("(eq? 1 1 1)")[0], Error("Contract error"))
 
     def test_eqv(self):
         # 0 args fails
-        self.assertRaises(InterpreterException, lambda: i("(eqv?)"))
+        self.assertEqual(i("(eqv?)")[0], Error("Contract error"))
         # 1 arg fails
-        self.assertRaises(InterpreterException, lambda: i("(eqv? 1)"))
-        self.assertRaises(InterpreterException, lambda: i("(eqv? #t)"))
+        self.assertEqual(i("(eqv? 1)")[0], Error("Contract error"))
+        self.assertEqual(i("(eqv? #t)")[0], Error("Contract error"))
         # 2 args positive cases
         # Null & Null returns true
         self.assertTrue(i("(eqv? '() '())")[0])
@@ -806,7 +896,7 @@ class TestPrimitiveProcedures(unittest.TestCase):
 
     def test_length(self):
         # 0 args fails
-        self.assertRaises(InterpreterException, lambda: i("(length)"))
+        self.assertEqual(i("(length)")[0], Error("Contract error"))
         # works with 1 list
         self.assertEqual(i("(length '())")[0], 0)
         self.assertEqual(i("(length '(1))")[0], 1)
@@ -814,19 +904,19 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertEqual(i("(length '(a b c))")[0], 3)
         self.assertEqual(i("(length '(() () ()))")[0], 3)
         # fails with non-list arg
-        self.assertRaises(InterpreterException, lambda: i("(length 1)"))
-        self.assertRaises(InterpreterException, lambda: i("(length 'a)"))
-        self.assertRaises(InterpreterException, lambda: i('(length "hello")'))
+        self.assertEqual(i("(length 1)")[0], Error("Contract error"))
+        self.assertEqual(i("(length 'a)")[0], Error("Contract error"))
+        self.assertEqual(i('(length "hello")')[0], Error("Contract error"))
         # 2+ args fails
-        self.assertRaises(InterpreterException, lambda: i("(length '() '())"))
-        self.assertRaises(InterpreterException, lambda: i("(length '(1 2 3) '(1 2 3))"))
+        self.assertEqual(i("(length '() '())")[0], Error("Contract error"))
+        self.assertEqual(i("(length '(1 2 3) '(1 2 3))")[0], Error("Contract error"))
 
     def test_cons(self):
         # 0 args fails
-        self.assertRaises(InterpreterException, lambda: i("(cons)"))
+        self.assertEqual(i("(cons)")[0], Error("Contract error"))
         # 1 arg fails
-        self.assertRaises(InterpreterException, lambda: i("(cons 1)"))
-        self.assertRaises(InterpreterException, lambda: i("(cons '())"))
+        self.assertEqual(i("(cons 1)")[0], Error("Contract error"))
+        self.assertEqual(i("(cons '())")[0], Error("Contract error"))
         # 2 args works
         self.assertEqual(i("(cons 1 2)")[0], (1, 2))
         self.assertEqual(i("(cons 'a 'b)")[0], (Symbol("a"), Symbol("b")))
@@ -836,11 +926,11 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertEqual(i("(cons '(1 2) 3)")[0], ((1, (2, ())), 3))
         self.assertEqual(i("(cons '(1 2) '(3 4))")[0], ((1, (2, ())), (3, (4, ()))))
         # 3+ args fails
-        self.assertRaises(InterpreterException, lambda: i("(cons 1 2 3)"))
+        self.assertEqual(i("(cons 1 2 3)")[0], Error("Contract error"))
 
     def test_car(self):
         # 0 args fails
-        self.assertRaises(InterpreterException, lambda: i("(car)"))
+        self.assertEqual(i("(car)")[0], Error("Contract error"))
         # 1 pair works
         self.assertEqual(i("(car '(1))")[0], 1)
         self.assertEqual(i("(car '(a . b))")[0], Symbol("a"))
@@ -848,14 +938,14 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertEqual(i("(car '((1 2 3) 4))")[0], (1, (2, (3, ()))))
         self.assertEqual(i("(car '((1 2 3) . 4))")[0], (1, (2, (3, ()))))
         # null input fails
-        self.assertRaises(InterpreterException, lambda: i("(car '())"))
+        self.assertEqual(i("(car '())")[0], Error("Contract error"))
         # 2+ args fails
-        self.assertRaises(InterpreterException, lambda: i("(car '(1 2) '(3 4))"))
-        self.assertRaises(InterpreterException, lambda: i("(car 1 2)"))
+        self.assertEqual(i("(car '(1 2) '(3 4))")[0], Error("Contract error"))
+        self.assertEqual(i("(car 1 2)")[0], Error("Contract error"))
 
     def test_cdr(self):
         # 0 args fails
-        self.assertRaises(InterpreterException, lambda: i("(cdr)"))
+        self.assertEqual(i("(cdr)")[0], Error("Contract error"))
         # 1 pair works
         self.assertEqual(i("(cdr '(1))")[0], ())
         self.assertEqual(i("(cdr '(a . b))")[0], Symbol("b"))
@@ -863,10 +953,10 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertEqual(i("(cdr '((1 2 3) 4))")[0], (4, ()))
         self.assertEqual(i("(cdr '((1 2 3) . 4))")[0], 4)
         # null input fails
-        self.assertRaises(InterpreterException, lambda: i("(cdr '())"))
+        self.assertEqual(i("(cdr '())")[0], Error("Contract error"))
         # 2+ args fails
-        self.assertRaises(InterpreterException, lambda: i("(cdr '(1 2) '(3 4))"))
-        self.assertRaises(InterpreterException, lambda: i("(cdr 1 2)"))
+        self.assertEqual(i("(cdr '(1 2) '(3 4))")[0], Error("Contract error"))
+        self.assertEqual(i("(cdr 1 2)")[0], Error("Contract error"))
 
     def test_append(self):
         # 0 args returns Null
@@ -882,10 +972,10 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertEqual(i("(append '() 'a)")[0], Symbol("a"))
         self.assertEqual(i("(append '() '() 1)")[0], 1)
         # null after non-null fails
-        self.assertRaises(InterpreterException, lambda: i("(append 1 '())"))
-        self.assertRaises(InterpreterException, lambda: i("(append '() 1 '())"))
+        self.assertEqual(i("(append 1 '())")[0], Error("Contract error"))
+        self.assertEqual(i("(append '() 1 '())")[0], Error("Contract error"))
         # list after non-list fails
-        self.assertRaises(InterpreterException, lambda: i("(append '(1 2) 3 '(4 5))"))
+        self.assertEqual(i("(append '(1 2) 3 '(4 5))")[0], Error("Contract error"))
         # positive cases
         self.assertEqual(i("(append '(1) 2)")[0], (1, 2))
         self.assertEqual(i("(append '(1 2) 3)")[0], (1, (2, 3)))
@@ -902,10 +992,10 @@ class TestPrimitiveProcedures(unittest.TestCase):
 
     def test_apply(self):
         # 0 args fails
-        self.assertRaises(InterpreterException, lambda: i("(apply)"))
+        self.assertEqual(i("(apply)")[0], Error("Contract error"))
         # 1 arg fails
-        self.assertRaises(InterpreterException, lambda: i("(apply +)"))
-        self.assertRaises(InterpreterException, lambda: i("(apply '())"))
+        self.assertEqual(i("(apply +)")[0], Error("Contract error"))
+        self.assertEqual(i("(apply '())")[0], Error("Contract error"))
 
         self.assertEqual(i("(apply + '(1 2 3))")[0], 6)
         self.assertEqual(i("(apply * '(2 3 4))")[0], 24)
@@ -916,13 +1006,11 @@ class TestPrimitiveProcedures(unittest.TestCase):
             i("(apply (lambda (x . args) args) '(1 2 3))) ")[0], (2, (3, ()))
         )
         # 2+ args fails
-        self.assertRaises(
-            InterpreterException, lambda: i("(apply + '(1 2 3) '(2 3 4))")
-        )
+        self.assertEqual(i("(apply + '(1 2 3) '(2 3 4))")[0], Error("Contract error"))
 
     def test_numeric_eq_pred(self):
         # 0 args fails
-        self.assertRaises(InterpreterException, lambda: i("(=)"))
+        self.assertEqual(i("(=)")[0], Error("Contract error"))
         # 1 arg returns true
         self.assertTrue(i("(= 1)")[0])
         self.assertTrue(i("(= 0)")[0])
@@ -940,16 +1028,16 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertTrue(i("(= -1 -1 -1)")[0])
         self.assertTrue(i("(= 3.14 3.14 3.14 3.14)")[0])
         # 1 wrong type arg fails
-        self.assertRaises(InterpreterException, lambda: i("(= #f)"))
-        self.assertRaises(InterpreterException, lambda: i("(= #t)"))
-        self.assertRaises(InterpreterException, lambda: i("(= '())"))
-        self.assertRaises(InterpreterException, lambda: i('(= "A")'))
+        self.assertEqual(i("(= #f)")[0], Error("Contract error"))
+        self.assertEqual(i("(= #t)")[0], Error("Contract error"))
+        self.assertEqual(i("(= '())")[0], Error("Contract error"))
+        self.assertEqual(i('(= "A")')[0], Error("Contract error"))
         # wrong type of many args fails
-        self.assertRaises(InterpreterException, lambda: i("(= #f #f)"))
-        self.assertRaises(InterpreterException, lambda: i("(= 1 #f)"))
-        self.assertRaises(InterpreterException, lambda: i("(= 1 1 #f)"))
-        self.assertRaises(InterpreterException, lambda: i("(= 1 1 #t)"))
-        self.assertRaises(InterpreterException, lambda: i("(= 1 #t 2)"))
+        self.assertEqual(i("(= #f #f)")[0], Error("Contract error"))
+        self.assertEqual(i("(= 1 #f)")[0], Error("Contract error"))
+        self.assertEqual(i("(= 1 1 #f)")[0], Error("Contract error"))
+        self.assertEqual(i("(= 1 1 #t)")[0], Error("Contract error"))
+        self.assertEqual(i("(= 1 #t 2)")[0], Error("Contract error"))
 
     def test_bool_eq_pred(self):
         # 0 args returns True
@@ -973,10 +1061,10 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertFalse(i("(boolean=? #f #f #t)")[0])
         self.assertFalse(i("(boolean=? #f #f #f #f #t)")[0])
         # wrong type fails
-        self.assertRaises(InterpreterException, lambda: i("(boolean=? 0)"))
-        self.assertRaises(InterpreterException, lambda: i("(boolean=? 1)"))
-        self.assertRaises(InterpreterException, lambda: i("(boolean=? 'a)"))
-        self.assertRaises(InterpreterException, lambda: i("(boolean=? #t #t 1)"))
+        self.assertEqual(i("(boolean=? 0)")[0], Error("Contract error"))
+        self.assertEqual(i("(boolean=? 1)")[0], Error("Contract error"))
+        self.assertEqual(i("(boolean=? 'a)")[0], Error("Contract error"))
+        self.assertEqual(i("(boolean=? #t #t 1)")[0], Error("Contract error"))
 
     def test_symbol_eq_pred(self):
         # 0 args returns True
@@ -999,12 +1087,12 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertFalse(i("(symbol=? 'B 'B 'A)")[0])
         self.assertFalse(i("(symbol=? 'A 'A 'A 'B)")[0])
         # wrong type fails
-        self.assertRaises(InterpreterException, lambda: i("(symbol=? 0)"))
-        self.assertRaises(InterpreterException, lambda: i("(symbol=? 1)"))
-        self.assertRaises(InterpreterException, lambda: i("(symbol=? #f)"))
-        self.assertRaises(InterpreterException, lambda: i('(symbol=? "A")'))
-        self.assertRaises(InterpreterException, lambda: i("""(symbol=? "A" 'A)"""))
-        self.assertRaises(InterpreterException, lambda: i("(symbol=? #t #t 1)"))
+        self.assertEqual(i("(symbol=? 0)")[0], Error("Contract error"))
+        self.assertEqual(i("(symbol=? 1)")[0], Error("Contract error"))
+        self.assertEqual(i("(symbol=? #f)")[0], Error("Contract error"))
+        self.assertEqual(i('(symbol=? "A")')[0], Error("Contract error"))
+        self.assertEqual(i("""(symbol=? "A" 'A)""")[0], Error("Contract error"))
+        self.assertEqual(i("(symbol=? #t #t 1)")[0], Error("Contract error"))
 
     def test_string_eq_pred(self):
         # 0 args returns True
@@ -1030,12 +1118,90 @@ class TestPrimitiveProcedures(unittest.TestCase):
         self.assertFalse(i('(string=? "B" "B" "A")')[0])
         self.assertFalse(i('(string=? "A" "A" "A" "B")')[0])
         # wrong type fails
-        self.assertRaises(InterpreterException, lambda: i("(string=? 0)"))
-        self.assertRaises(InterpreterException, lambda: i("(string=? 1)"))
-        self.assertRaises(InterpreterException, lambda: i("(string=? #f)"))
-        self.assertRaises(InterpreterException, lambda: i("""(string=? "A" 'A)"""))
-        self.assertRaises(InterpreterException, lambda: i("(string=? #t #t 1)"))
-        self.assertRaises(InterpreterException, lambda: i("(string=? '())"))
+        self.assertEqual(i("(string=? 0)")[0], Error("Contract error"))
+        self.assertEqual(i("(string=? 1)")[0], Error("Contract error"))
+        self.assertEqual(i("(string=? #f)")[0], Error("Contract error"))
+        self.assertEqual(i("""(string=? "A" 'A)""")[0], Error("Contract error"))
+        self.assertEqual(i("(string=? #t #t 1)")[0], Error("Contract error"))
+        self.assertEqual(i("(string=? '())")[0], Error("Contract error"))
+
+    def test_with_exception_handler(self):
+        # thunk's val should be returned if no exception happens
+        self.assertEqual(
+            i("""
+            (with-exception-handler (lambda (x) x) (lambda () 10))
+        """)[0],
+            10,
+        )
+
+        self.assertEqual(
+            i("""
+            (with-exception-handler (lambda (x) x) (lambda () (* 10 10)))
+        """)[0],
+            100,
+        )
+
+        # If a handler returns from `raise`, a new error is raised
+        self.assertEqual(
+            i("""
+            (with-exception-handler (lambda (x) 123) (lambda () (+ "A" "A")))
+        """)[0],
+            (Error("Exception handler returned"), 123),
+        )
+
+        # Otherwise, it can escape using call/cc
+        self.assertEqual(
+            i("""
+            (call/cc
+              (lambda (k)
+                (with-exception-handler
+                    (lambda (err) (k 100))
+                    (lambda () (NOT_A_VALID_FUNC)))))
+            """)[0],
+            100,
+        )
+
+    def test_raise(self):
+        # basic
+        self.assertEqual(i("""(raise 99)""")[0], 99)
+        self.assertEqual(i("""(+ 1 (raise 99))""")[0], 99)
+
+        # can escape using handler + call/cc
+        self.assertEqual(
+            i("""
+            (call/cc
+              (lambda (k)
+                (with-exception-handler
+                    (lambda (err) (k 'OK))
+                    (lambda () (raise 'ERR)))))
+            """)[0],
+            Symbol("OK"),
+        )
+
+        # handled, but not escaped
+        self.assertEqual(
+            i("""
+                (with-exception-handler
+                    (lambda (x)
+                        'OK)
+                    (lambda ()
+                        (raise 'ERR)))
+            """)[0],
+            (Error("Exception handler returned"), Symbol("OK")),
+        )
+
+    def test_raise_continuable(self):
+        # handled, but not escaped
+        self.assertEqual(
+            i("""
+                (with-exception-handler
+                    (lambda (x)
+                        'OK)
+                    (lambda ()
+                        (raise-continuable 'ERR)))
+            """)[0],
+            Symbol("OK"),
+        )
 
 
 if __name__ == "__main__":
