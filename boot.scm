@@ -226,7 +226,6 @@
                 (expand mapped)))
                 ; mapped
         exp))
-                
 
 ; (define (expand exp)
 ;     (if (null? exp)

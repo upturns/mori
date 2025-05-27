@@ -369,17 +369,17 @@ def reverse(lst: ProperList[P]) -> ProperList[P]:
 T = TypeVar("T")
 
 
-def reduce_proper_list(exp: ProperList[P], f: Callable[[P, T], T], accum: T) -> T:
-    # todo: should probably use while loop instead of recursion
-    if isNonNullProperList(exp):
-        fst = car(exp)
-        rest = cdr(exp)
+# def reduce_proper_list(exp: ProperList[P], f: Callable[[P, T], T], accum: T) -> T:
+#     # todo: should probably use while loop instead of recursion
+#     if isNonNullProperList(exp):
+#         fst = car(exp)
+#         rest = cdr(exp)
 
-        if isNull(rest):
-            return f(fst, accum)
+#         if isNull(rest):
+#             return f(fst, accum)
 
-        return reduce_proper_list(rest, f, f(fst, accum))
-    return accum
+#         return reduce_proper_list(rest, f, f(fst, accum))
+#     return accum
 
 
 def isPair(expr: Expr) -> TypeGuard[ConsCell[Expr, Expr]]:
